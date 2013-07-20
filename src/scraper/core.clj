@@ -71,7 +71,9 @@
   (.mkdir (io/file dir))
   (if (.exists (io/file file))
     (println "file exists - skipping")
-    (write-file file (download-from url)))))
+    (try
+      (write-file file (download-from url))
+      (catch java.net.ConnectException _ (println "download failed - skipping"))))))
 
 
 (defn scrape-post [url]
