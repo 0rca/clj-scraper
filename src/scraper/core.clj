@@ -73,7 +73,7 @@
     (println "file exists - skipping")
     (try
       (write-file file (download-from url))
-      (catch java.net.ConnectException _ (println "download failed - skipping"))))))
+      (catch Exception _ (println "some error happened - skipping"))))))
 
 
 (defn scrape-post [url]
