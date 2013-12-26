@@ -105,15 +105,30 @@
       (recur (next-page page)))))
 
 
+(defn next-page
+  "Returns next page url for url given, or nil if none found"
+  [url]
+  (when (not (nil? url))
+    (let [page (fetch-url url)]
+      (:href (:attrs (first (filter (fn [el] (= "earlier" (-> el :content first))) (html/select page [:a]))))))))
 
-(defn -main
-  "I don't do a whole lot ... yet."
-  [& args]
+
+(defn page-seq
+  "Returns lazy sequence of pages, paginated by next-page function"
+  [base-url page-fn]
+  (iterate page-fn base-url))
+
+
+
+(defn -main []
   ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
 
-  (.mkdir (io/file "images"))
+  ;; (.mkdir (io/file "images"))
 
-  (scrape-all base-url)
+  ;; (scrape-all base-url)
 
+  (def pages (take 100 (page-seq base-url next-page)))
+
+  (doseq [url pages] (println "url: " url))
 )
