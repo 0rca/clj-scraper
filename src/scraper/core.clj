@@ -104,13 +104,19 @@
       (println "scraping from " url)
       (recur (next-page page)))))
 
+(defn find-all-by-text [page text]
+  (map #(-> % :attrs :href) (filter (fn [el] (= text (-> el :content first))) (html/select page [:a]))))
 
+(defn find-by-text [page text]
+  (first (find-all-by-text page text)))
+
+;; site-specific stuff
 (defn next-page
   "Returns next page url for url given, or nil if none found"
   [url]
   (when (not (nil? url))
     (let [page (fetch-url url)]
-      (:href (:attrs (first (filter (fn [el] (= "earlier" (-> el :content first))) (html/select page [:a]))))))))
+      (find-by-text page "earlier"))))
 
 
 (defn page-seq
@@ -118,7 +124,12 @@
   [base-url page-fn]
   (iterate page-fn base-url))
 
-
+;; site-specific
+;; (defn posts-for
+;;   "Maps over sequence of pages, and returns posts urls"
+;;   [page-url]
+;;   (let [page (fetch-url page-url)]
+;;     (filter(html/select [:a])
 
 (defn -main []
   ;; work around dangerous default behaviour in Clojure
@@ -128,7 +139,10 @@
 
   ;; (scrape-all base-url)
 
-  (def pages (take 100 (page-seq base-url next-page)))
+  (def pages (take 10 (page-seq base-url next-page)))
+  ;; (def first-page-hrefs
+  ;;   (let [page (fetch-url base-url)]
+  ;;     (find-all-by-text page "Link")))
 
   (doseq [url pages] (println "url: " url))
 )
