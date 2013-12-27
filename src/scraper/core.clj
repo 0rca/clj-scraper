@@ -105,7 +105,9 @@
       (recur (next-page page)))))
 
 (defn find-all-by-text [page text]
-  (map #(-> % :attrs :href) (filter (fn [el] (= text (-> el :content first))) (html/select page [:a]))))
+  (map #(-> % :attrs :href)
+        (filter #(= text (-> % :content first))
+                 (html/select page [:a]))))
 
 (defn find-by-text [page text]
   (first (find-all-by-text page text)))
@@ -114,9 +116,9 @@
 (defn next-page
   "Returns next page url for url given, or nil if none found"
   [url]
-  (when (not (nil? url))
-    (let [page (fetch-url url)]
-      (find-by-text page "earlier"))))
+  (when (map? url)
+    (let [page (fetch-url (url :page))]
+      {:page (find-by-text page "earlier")})))
 
 
 (defn page-seq
@@ -124,12 +126,34 @@
   [base-url page-fn]
   (iterate page-fn base-url))
 
-;; site-specific
-;; (defn posts-for
-;;   "Maps over sequence of pages, and returns posts urls"
-;;   [page-url]
-;;   (let [page (fetch-url page-url)]
-;;     (filter(html/select [:a])
+(defn posts-for [url]
+  (when (map? url)
+    (let [page (fetch-url (url :page))]
+      (map #(apply hash-map %)
+            (partition 2 (interleave (iterate identity :post) (find-all-by-text page "Link")))))))
+
+
+(defn post-seq [pages posts-fn]
+  (mapcat posts-fn pages))
+
+(defn image-seq [url]
+  (let [page    (fetch-url (url :post))
+        links   (html/select page [:a])
+        hrefs   (filter #(not (nil? %)) (map #(-> % :attrs :href) links))
+        jpegs   (filter jpeg? hrefs)
+        title   (html/text (last (html/select page [:td.caption])))]
+    (map #(apply hash-map %) jpegs))
+
+;; Site-specific stuff
+(defn lj-pages []
+  (page-seq {:page base-url} next-page))
+
+(defn lj-posts []
+  (post-seq (lj-pages) posts-for))
+
+(defn lj-images []
+  mapcat image-seq (lj-posts))
+
 
 (defn -main []
   ;; work around dangerous default behaviour in Clojure
@@ -139,10 +163,8 @@
 
   ;; (scrape-all base-url)
 
-  (def pages (take 10 (page-seq base-url next-page)))
-  ;; (def first-page-hrefs
-  ;;   (let [page (fetch-url base-url)]
-  ;;     (find-all-by-text page "Link")))
 
-  (doseq [url pages] (println "url: " url))
+  (doseq [post-url images]
+    (println "scraping from " post-url))
+
 )
