@@ -126,11 +126,15 @@
   [base-url page-fn]
   (iterate page-fn base-url))
 
+(defn tag-all-with [xs tag]
+  (map #(apply hash-map %)
+        (partition 2
+                  (interleave (iterate identity tag) xs))))
+
 (defn posts-for [url]
   (when (map? url)
     (let [page (fetch-url (url :page))]
-      (map #(apply hash-map %)
-            (partition 2 (interleave (iterate identity :post) (find-all-by-text page "Link")))))))
+      (tag-all-with (find-all-by-text page "Link") :post))))
 
 
 (defn post-seq [pages posts-fn]
@@ -142,7 +146,7 @@
         hrefs   (filter #(not (nil? %)) (map #(-> % :attrs :href) links))
         jpegs   (filter jpeg? hrefs)
         title   (html/text (last (html/select page [:td.caption])))]
-    (map #(apply hash-map %) jpegs))
+    (tag-all-with jpegs :img)))
 
 ;; Site-specific stuff
 (defn lj-pages []
@@ -152,7 +156,7 @@
   (post-seq (lj-pages) posts-for))
 
 (defn lj-images []
-  mapcat image-seq (lj-posts))
+  (mapcat image-seq (lj-posts)))
 
 
 (defn -main []
@@ -164,7 +168,7 @@
   ;; (scrape-all base-url)
 
 
-  (doseq [post-url images]
+  (doseq [post-url (take 5 (lj-images))]
     (println "scraping from " post-url))
 
 )
