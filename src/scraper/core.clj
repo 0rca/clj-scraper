@@ -61,48 +61,34 @@
      (.write w (:body stream))))
 
 
-(defn filename-from [url]
-  (last (clojure.string/split url #"/")))
+
+;; (defn scrape-post [url]
+;;   (let [page    (fetch-url url)
+;;         links   (html/select page [:a])
+;;         hrefs   (filter #(not (nil? %)) (map #(-> % :attrs :href) links))
+;;         jpegs   (filter jpeg? hrefs)
+;;         title   (html/text (last (html/select page [:td.caption])))]
+;;
+;;     (println "\t" (count jpegs) " images at " title )
+;;     (doseq [url jpegs]
+;;       (println "Downloading from " url)
+;;       (download-and-save url title)
+;;       )))
 
 
-(defn download-and-save [url title]
-  (let [dir  (str/join "/" ["images" title])
-        file (str/join "/" [dir (filename-from url)])]
-  (.mkdir (io/file dir))
-  (if (.exists (io/file file))
-    (println "file exists - skipping")
-    (try
-      (write-file file (download-from url))
-      (catch Exception _ (println "some error happened - skipping"))))))
+;; (defn scrape-page [page]
+;;   (println "Page: " (-> (html/select page [:title]) first :content))
+;;   (doseq [item (posts page)]
+;;     (println "\tPost: " item)
+;;     (scrape-post item)))
 
 
-(defn scrape-post [url]
-  (let [page    (fetch-url url)
-        links   (html/select page [:a])
-        hrefs   (filter #(not (nil? %)) (map #(-> % :attrs :href) links))
-        jpegs   (filter jpeg? hrefs)
-        title   (html/text (last (html/select page [:td.caption])))]
-
-    (println "\t" (count jpegs) " images at " title )
-    (doseq [url jpegs]
-      (println "Downloading from " url)
-      (download-and-save url title)
-      )))
-
-
-(defn scrape-page [page]
-  (println "Page: " (-> (html/select page [:title]) first :content))
-  (doseq [item (posts page)]
-    (println "\tPost: " item)
-    (scrape-post item)))
-
-
-(defn scrape-all [url]
-  (when (not (nil? url))
-    (let [page (fetch-url url)]
-      (scrape-page page)
-      (println "scraping from " url)
-      (recur (next-page page)))))
+;; (defn scrape-all [url]
+;;   (when (not (nil? url))
+;;     (let [page (fetch-url url)]
+;;       (scrape-page page)
+;;       (println "scraping from " url)
+;;       (recur (next-page page)))))
 
 (defn find-all-by-text [page text]
   (map #(-> % :attrs :href)
@@ -137,6 +123,15 @@
       (tag-all-with (find-all-by-text page "Link") :post))))
 
 
+(defn url-to-filename [url]
+  (str/join ""
+    (drop 3
+      (str/split url #"/"))))
+
+(assert (= (url-to-filename "http://s017.radikal.ru/i413/1312/6b/3dd009003d85.jpg")
+            "i41313126b3dd009003d85.jpg"))
+
+
 (defn post-seq [pages posts-fn]
   (mapcat posts-fn pages))
 
@@ -146,7 +141,9 @@
         hrefs   (filter #(not (nil? %)) (map #(-> % :attrs :href) links))
         jpegs   (filter jpeg? hrefs)
         title   (html/text (last (html/select page [:td.caption])))]
-    (tag-all-with jpegs :img)))
+    (map #(merge {:title title :index %1} %2)
+          (range)
+          (tag-all-with jpegs :img))))
 
 ;; Site-specific stuff
 (defn lj-pages []
@@ -163,12 +160,19 @@
   ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
 
-  ;; (.mkdir (io/file "images"))
+  (.mkdir (io/file "images-new"))
 
-  ;; (scrape-all base-url)
+  (doseq [image-src (take 15 (lj-images))]
+    (let [title (str/trim (:title image-src))
+          src   (:img   image-src)
+          index (:index image-src)
+          dir   (str "images/" title)
+          file  (str dir "/" index "-" (url-to-filename src))]
 
-
-  (doseq [post-url (take 5 (lj-images))]
-    (println "scraping from " post-url))
-
-)
+      (println "downloading from " src)
+      (.mkdir (io/file dir))
+      (if (.exists (io/file file))
+        (println "file exists - skipping")
+        (try
+          (write-file file (download-from src))
+          (catch Exception e (println (str e " - skipping"))))))))
