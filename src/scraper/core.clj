@@ -192,13 +192,19 @@
       (do
         (println title " <- " src)
         (make-dir dir)
-        (cond (.exists (io/file file))
-              (println "file exists - skipping")
-              (.exists (io/file oldfile))
-              (println "v1 file exists - skipping (but could rename, instead)")
-              :else
-              (try
-                (write-file file (download-from src))
-                (println "Saved as " file)
-                (println "--")
-                (catch Exception e (println (str e " - skipping")))))))))
+        (let [file-v1 (io/file oldfile)
+              file-v2 (io/file file)]
+          (cond (.exists file-v2)
+                (println "file exists - skipping")
+                (.exists file-v1)
+                (do
+                  (println "old file exists - renaming to " file)
+                  (if (.renameTo file-v1 file-v2)
+                    (println "Success!")
+                    (println "Failure...")))
+                :else
+                (try
+                  (write-file file (download-from src))
+                  (println "Saved as " file)
+                  (println "--")
+                  (catch Exception e (println (str e " - skipping"))))))))))
