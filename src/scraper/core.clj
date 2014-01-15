@@ -6,13 +6,35 @@
   (:gen-class))
 
 (def ^:dynamic *debug* false)
+(def ^:dynamic *cache-dir* "cache")
 
-(def base-url "http://lj.rossia.org/users/vrotmnen0gi/?skip=6160")
+(def base-url "http://lj.rossia.org/users/vrotmnen0gi/")
 ;; (def base-url "http://lj.rossia.org/users/vrotmnen0gi/?skip=40")
+
+(defn download-from [url]
+  (client/get url {:as :byte-array}))
+
+(defn write-file [f stream]
+   (with-open [w (clojure.java.io/output-stream f)]
+     (.write w (:body stream))))
 
 (defn fetch-url [url]
   (when *debug* (println "Fetching " url))
   (html/html-resource (java.net.URL. url)))
+
+(defn fetch-cached-url [url]
+  (when *debug* (println "Fetching" url "from cache"))
+  (let [file (last (str/split url #"/"))
+        path (str *cache-dir* "/" file)]
+    (if (.exists (io/file path))
+      (println "HIT")
+      (do
+        (println "MISS: downloading")
+        (write-file path (download-from url))
+        (println "OK")))
+
+    (html/html-resource (io/file path))))
+
 
 (defn links-all [page]
   (map #(:href (:attrs %))
@@ -47,14 +69,6 @@
 (assert (= true (jpeg? "http://example.com/img/123.jpg")))
 (assert (= true (jpeg? "http://example.com/img/123.jpeg")))
 
-
-(defn download-from [url]
-  (client/get url {:as :byte-array}))
-
-
-(defn write-file [f stream]
-   (with-open [w (clojure.java.io/output-stream f)]
-     (.write w (:body stream))))
 
 (defn find-all-by-text [page text]
   (map #(-> % :attrs :href)
@@ -118,7 +132,7 @@
       (concat (posts-fn (first pages)) (post-seq (rest pages) posts-fn)))))
 
 (defn image-seq [url]
-  (let [page    (fetch-url (url :post))
+  (let [page    (fetch-cached-url (url :post))
         links   (html/select page [:a])
         hrefs   (filter #(not (nil? %)) (map #(-> % :attrs :href) links))
         jpegs   (filter jpeg? hrefs)
@@ -129,22 +143,13 @@
 
 ;; Site-specific stuff
 (defn lj-pages []
-  (page-seq {:page base-url} next-page))
+  (page-seq {:page base-url} prev-page))
 
 (defn lj-posts []
   (post-seq (lj-pages) posts-for))
 
 (defn lj-images []
   (mapcat image-seq (lj-posts)))
-
-
-;; (De-)serializing functions (defunct)
-(defn cache-page [page filename]
-  (spit filename (binding [*print-dup* true] (pr-str page))))
-
-(defn uncache-page [filename]
-  (with-in-str (slurp filename) (read)))
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn make-dir [& dirs]
   (doseq [v dirs]
@@ -158,8 +163,8 @@
 (def remote-jpeg? (partial remote-type? "image/jpeg"))
 
 (defn -main []
-  ;; work around dangerous default behaviour in Clojure
-  (alter-var-root #'*read-eval* (constantly false))
+;; work around dangerous default behaviour in Clojure
+;;   (alter-var-root #'*read-eval* (constantly false))
 
   (binding [*debug* true]
     (make-dir "images" "cache")
@@ -180,16 +185,15 @@
                   (println "file exists - skipping")
                   (.exists file-v1)
                   (do
-                    (println "old file exists - renaming to " file)
-                    (if (.renameTo file-v1 file-v2)
-                      (println "Success!")
+                    (println "old file exists - renaming to" file)
+                    (when-not (.renameTo file-v1 file-v2)
                       (println "Failure...")))
                   :else
                   (try
+                    (println ".")
                     (when (remote-jpeg? src)
                       (println file "<-" src)
                       (make-dir dir)
                       (write-file file (download-from src))
-                      (println "Saved as " file)
-                      (println "--"))
+                      (println "Saved as " file))
                     (catch Exception e (println (str e " - skipping")))))))))))
