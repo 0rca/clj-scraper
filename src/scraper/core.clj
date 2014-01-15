@@ -123,14 +123,19 @@
       (tag-all-with (find-all-by-text page "Link") :post))))
 
 
-(defn url-to-filename [url]
+(defn filename-v1 [url]
+  (last (str/split url #"/")))
+
+(defn filename-v2 [url]
   (str/join ""
     (drop 3
       (str/split url #"/"))))
 
-(assert (= (url-to-filename "http://s017.radikal.ru/i413/1312/6b/3dd009003d85.jpg")
+(assert (= (filename-v2 "http://s017.radikal.ru/i413/1312/6b/3dd009003d85.jpg")
             "i41313126b3dd009003d85.jpg"))
 
+(assert (= (filename-v1 "http://s017.radikal.ru/i413/1312/6b/3dd009003d85.jpg")
+            "3dd009003d85.jpg"))
 
 (defn post-seq [pages posts-fn]
   (mapcat posts-fn pages))
@@ -156,23 +161,39 @@
   (mapcat image-seq (lj-posts)))
 
 
+;; (De-)serializing functions (defunct)
+(defn cache-page [page filename]
+  (spit filename (binding [*print-dup* true] (pr-str page))))
+
+(defn uncache-page [filename]
+  (with-in-str (slurp filename) (read)))
+;;
+
+
 (defn -main []
   ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
 
-  (.mkdir (io/file "images-new"))
+  (.mkdir (io/file "images"))
+  (.mkdir (io/file "cache"))
 
-  (doseq [image-src (take 15 (lj-images))]
+  (doseq [image-src (lj-images)]
     (let [title (str/trim (:title image-src))
           src   (:img   image-src)
           index (:index image-src)
           dir   (str "images/" title)
-          file  (str dir "/" index "-" (url-to-filename src))]
+          oldfile (str dir "/" (filename-v1 src))
+          file  (str dir "/" index "-" (filename-v2 src))]
 
-      (println "downloading from " src)
+      (println title " <- " src)
       (.mkdir (io/file dir))
-      (if (.exists (io/file file))
-        (println "file exists - skipping")
-        (try
-          (write-file file (download-from src))
-          (catch Exception e (println (str e " - skipping"))))))))
+      (cond (.exists (io/file file))
+            (println "file exists - skipping")
+            (.exists (io/file oldfile))
+            (println "v1 file exists - skipping")
+            :else
+            (try
+              (write-file file (download-from src))
+              (println "Saved as " file)
+              (println "--")
+              (catch Exception e (println (str e " - skipping"))))))))
