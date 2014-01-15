@@ -172,39 +172,43 @@
 (defn make-dir [& dirs]
   (for [v dirs]
     (let [d (io/file v)]
-      (when-not (.exists d) (.mkdir d)))))
+      (when-not (.exists d) (.mkdirs d)))))
 
 
 (defn -main []
   ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
 
-  (make-dir "images" "cache")
+  (doseq [page (lj-pages)]
+    (println "Page: " page))
 
-  (doseq [image-src (lj-images)]
-    (let [title (str/trim (:title image-src))
-          src   (:img   image-src)
-          index (:index image-src)
-          dir   (str "images/" title)
-          oldfile (str dir "/" (filename-v1 src))
-          file  (str dir "/" index "-" (filename-v2 src))]
+  (binding [*debug* true]
+    (make-dir "images" "cache")
 
-      (do
-        (println title " <- " src)
-        (make-dir dir)
-        (let [file-v1 (io/file oldfile)
-              file-v2 (io/file file)]
-          (cond (.exists file-v2)
-                (println "file exists - skipping")
-                (.exists file-v1)
-                (do
-                  (println "old file exists - renaming to " file)
-                  (if (.renameTo file-v1 file-v2)
-                    (println "Success!")
-                    (println "Failure...")))
-                :else
-                (try
-                  (write-file file (download-from src))
-                  (println "Saved as " file)
-                  (println "--")
-                  (catch Exception e (println (str e " - skipping"))))))))))
+    (doseq [image-src (lj-images)]
+      (let [title (str/trim (:title image-src))
+            src   (:img   image-src)
+            index (:index image-src)
+            dir   (str "images/" title)
+            oldfile (str dir "/" (filename-v1 src))
+            file  (str dir "/" index "-" (filename-v2 src))]
+
+        (do
+          (println title " <- " src)
+          (make-dir dir)
+          (let [file-v1 (io/file oldfile)
+                file-v2 (io/file file)]
+            (cond (.exists file-v2)
+                  (println "file exists - skipping")
+                  (.exists file-v1)
+                  (do
+                    (println "old file exists - renaming to " file)
+                    (if (.renameTo file-v1 file-v2)
+                      (println "Success!")
+                      (println "Failure...")))
+                  :else
+                  (try
+                    (write-file file (download-from src))
+                    (println "Saved as " file)
+                    (println "--")
+                    (catch Exception e (println (str e " - skipping")))))))))))
