@@ -6,8 +6,11 @@
   (:gen-class))
 
 (def base-url "http://lj.rossia.org/users/vrotmnen0gi/")
+(def ^:dynamic *debug* false)
+
 
 (defn fetch-url [url]
+  (when *debug* (println "Fetching " url))
   (html/html-resource (java.net.URL. url)))
 
 (defn links-all [page]
