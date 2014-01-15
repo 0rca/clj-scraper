@@ -7,6 +7,7 @@
 
 (def ^:dynamic *debug* false)
 (def ^:dynamic *cache-dir* "cache")
+(def ^:dynamic *images-dir* "images")
 
 (def base-url "http://lj.rossia.org/users/vrotmnen0gi/")
 ;; (def base-url "http://lj.rossia.org/users/vrotmnen0gi/?skip=40")
@@ -167,13 +168,13 @@
 ;;   (alter-var-root #'*read-eval* (constantly false))
 
   (binding [*debug* true]
-    (make-dir "images" "cache")
+    (make-dir *images-dir* *cache-dir*)
 
     (doseq [image-src (lj-images)]
       (let [title   (str/trim (str/replace (:title image-src) #"[:)]" "_"))
             src     (:img   image-src)
             index   (:index image-src)
-            dir     (str "images/" title)
+            dir     (str *images-dir* "/" title)
             oldfile (str dir "/" (filename-v1 src))
             file    (str dir "/" index "-" (filename-v2 src))]
 
@@ -182,18 +183,18 @@
           (let [file-v1 (io/file oldfile)
                 file-v2 (io/file file)]
             (cond (.exists file-v2)
-                  (println "file exists - skipping")
+                  (println "x")
                   (.exists file-v1)
                   (do
-                    (println "old file exists - renaming to" file)
+                    (println "r" file)
                     (when-not (.renameTo file-v1 file-v2)
                       (println "Failure...")))
                   :else
                   (try
                     (println ".")
                     (when (remote-jpeg? src)
-                      (println file "<-" src)
+                      (println "g" src)
                       (make-dir dir)
                       (write-file file (download-from src))
-                      (println "Saved as " file))
+                      (println "w" file))
                     (catch Exception e (println (str e " - skipping")))))))))))
