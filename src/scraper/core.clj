@@ -5,9 +5,10 @@
   (:require [clojure.string       :as str])
   (:gen-class))
 
-(def base-url "http://lj.rossia.org/users/vrotmnen0gi/")
 (def ^:dynamic *debug* false)
 
+(def base-url "http://lj.rossia.org/users/vrotmnen0gi/?skip=6160")
+;; (def base-url "http://lj.rossia.org/users/vrotmnen0gi/?skip=40")
 
 (defn fetch-url [url]
   (when *debug* (println "Fetching " url))
@@ -143,35 +144,36 @@
 
 (defn uncache-page [filename]
   (with-in-str (slurp filename) (read)))
-;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn make-dir [& dirs]
-  (for [v dirs]
-    (let [d (io/file v)]
-      (when-not (.exists d) (.mkdirs d)))))
+  (doseq [v dirs]
+    (let [dir (io/file v)]
+      (when-not (.exists dir)
+        (.mkdirs dir)))))
 
+(defn remote-type? [type url]
+  (= type (get-in (client/head url) [:headers "content-type"])))
+
+(def remote-jpeg? (partial remote-type? "image/jpeg"))
 
 (defn -main []
   ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
 
-  (doseq [page (lj-pages)]
-    (println "Page: " page))
-
   (binding [*debug* true]
     (make-dir "images" "cache")
 
     (doseq [image-src (lj-images)]
-      (let [title (str/trim (:title image-src))
-            src   (:img   image-src)
-            index (:index image-src)
-            dir   (str "images/" title)
+      (let [title   (str/trim (str/replace (:title image-src) #"[:)]" "_"))
+            src     (:img   image-src)
+            index   (:index image-src)
+            dir     (str "images/" title)
             oldfile (str dir "/" (filename-v1 src))
-            file  (str dir "/" index "-" (filename-v2 src))]
+            file    (str dir "/" index "-" (filename-v2 src))]
 
         (do
-          (println title " <- " src)
-          (make-dir dir)
+
           (let [file-v1 (io/file oldfile)
                 file-v2 (io/file file)]
             (cond (.exists file-v2)
@@ -184,7 +186,10 @@
                       (println "Failure...")))
                   :else
                   (try
-                    (write-file file (download-from src))
-                    (println "Saved as " file)
-                    (println "--")
+                    (when (remote-jpeg? src)
+                      (println file "<-" src)
+                      (make-dir dir)
+                      (write-file file (download-from src))
+                      (println "Saved as " file)
+                      (println "--"))
                     (catch Exception e (println (str e " - skipping")))))))))))
