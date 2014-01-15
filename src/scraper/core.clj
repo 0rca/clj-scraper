@@ -37,14 +37,6 @@
 (defn posts [page]
   (filter post? (links-all page)))
 
-
-(defn next-page [page]
-  (let [paginators (filter #(-> % :attrs :href next?) (html/select page [:a]))
-        prev       (first (filter #(= "earlier" (first (:content %))) paginators))]
-  (-> prev :attrs :href)
-))
-
-
 (defn jpeg? [url]
   (let [file (-> url (str/split #"/") last)
         ext  (-> file (str/split #"\.") last)]
@@ -62,36 +54,6 @@
 (defn write-file [f stream]
    (with-open [w (clojure.java.io/output-stream f)]
      (.write w (:body stream))))
-
-
-;; legacy code
-;; (defn scrape-post [url]
-;;   (let [page    (fetch-url url)
-;;         links   (html/select page [:a])
-;;         hrefs   (filter #(not (nil? %)) (map #(-> % :attrs :href) links))
-;;         jpegs   (filter jpeg? hrefs)
-;;         title   (html/text (last (html/select page [:td.caption])))]
-;;
-;;     (println "\t" (count jpegs) " images at " title )
-;;     (doseq [url jpegs]
-;;       (println "Downloading from " url)
-;;       (download-and-save url title)
-;;       )))
-
-
-;; (defn scrape-page [page]
-;;   (println "Page: " (-> (html/select page [:title]) first :content))
-;;   (doseq [item (posts page)]
-;;     (println "\tPost: " item)
-;;     (scrape-post item)))
-
-
-;; (defn scrape-all [url]
-;;   (when (not (nil? url))
-;;     (let [page (fetch-url url)]
-;;       (scrape-page page)
-;;       (println "scraping from " url)
-;;       (recur (next-page page)))))
 
 (defn find-all-by-text [page text]
   (map #(-> % :attrs :href)
