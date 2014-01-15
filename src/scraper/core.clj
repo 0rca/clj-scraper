@@ -61,7 +61,7 @@
      (.write w (:body stream))))
 
 
-
+;; legacy code
 ;; (defn scrape-post [url]
 ;;   (let [page    (fetch-url url)
 ;;         links   (html/select page [:a])
@@ -169,13 +169,17 @@
   (with-in-str (slurp filename) (read)))
 ;;
 
+(defn make-dir [& dirs]
+  (for [v dirs]
+    (let [d (io/file v)]
+      (when-not (.exists d) (.mkdir d)))))
+
 
 (defn -main []
   ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
 
-  (.mkdir (io/file "images"))
-  (.mkdir (io/file "cache"))
+  (make-dir "images" "cache")
 
   (doseq [image-src (lj-images)]
     (let [title (str/trim (:title image-src))
@@ -185,15 +189,16 @@
           oldfile (str dir "/" (filename-v1 src))
           file  (str dir "/" index "-" (filename-v2 src))]
 
-      (println title " <- " src)
-      (.mkdir (io/file dir))
-      (cond (.exists (io/file file))
-            (println "file exists - skipping")
-            (.exists (io/file oldfile))
-            (println "v1 file exists - skipping")
-            :else
-            (try
-              (write-file file (download-from src))
-              (println "Saved as " file)
-              (println "--")
-              (catch Exception e (println (str e " - skipping"))))))))
+      (do
+        (println title " <- " src)
+        (make-dir dir)
+        (cond (.exists (io/file file))
+              (println "file exists - skipping")
+              (.exists (io/file oldfile))
+              (println "v1 file exists - skipping (but could rename, instead)")
+              :else
+              (try
+                (write-file file (download-from src))
+                (println "Saved as " file)
+                (println "--")
+                (catch Exception e (println (str e " - skipping")))))))))
