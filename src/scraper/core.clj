@@ -74,8 +74,11 @@
 
 (defn page-seq
   "Returns lazy sequence of pages, paginated by next-page function"
-  [base-url page-fn]
-  (iterate page-fn base-url))
+  [url page-fn]
+  (lazy-seq
+    (when-not (or (nil? (:page url))
+                  (nil? url))
+      (cons url (page-seq (page-fn url) page-fn)))))
 
 (defn tag-all-with [xs tag]
   (map #(apply hash-map %)
