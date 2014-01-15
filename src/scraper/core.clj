@@ -64,13 +64,19 @@
   (first (find-all-by-text page text)))
 
 ;; site-specific stuff
-(defn next-page
+(defn prev-page
   "Returns next page url for url given, or nil if none found"
   [url]
   (when (map? url)
     (let [page (fetch-url (url :page))]
       {:page (find-by-text page "earlier")})))
 
+(defn next-page
+  "Returns next page url for url given, or nil if none found"
+  [url]
+  (when-not (nil? (:page url))
+    (let [page (fetch-url (url :page))]
+      {:page (find-by-text page "later")})))
 
 (defn page-seq
   "Returns lazy sequence of pages, paginated by next-page function"
