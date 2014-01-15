@@ -112,7 +112,9 @@
             "3dd009003d85.jpg"))
 
 (defn post-seq [pages posts-fn]
-  (mapcat posts-fn pages))
+  (lazy-seq
+    (when (seq? pages)
+      (concat (posts-fn (first pages)) (post-seq (rest pages) posts-fn)))))
 
 (defn image-seq [url]
   (let [page    (fetch-url (url :post))
