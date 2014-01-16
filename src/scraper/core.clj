@@ -159,6 +159,7 @@
         (.mkdirs dir)))))
 
 (defn remote-type? [type url]
+  (when *debug* (println "."))
   (= type (get-in (client/head url) [:headers "content-type"])))
 
 (def remote-jpeg? (partial remote-type? "image/jpeg"))
@@ -191,7 +192,6 @@
                       (println "Failure...")))
                   :else
                   (try
-                    (println ".")
                     (when (remote-jpeg? src)
                       (println "g" src)
                       (make-dir dir)
