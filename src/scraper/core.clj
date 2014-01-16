@@ -171,7 +171,7 @@
     (make-dir *images-dir* *cache-dir*)
 
     (doseq [image-src (lj-images)]
-      (let [title   (str/trim (str/replace (:title image-src) #"[:)]" "_"))
+      (let [title   (str/trim (str/replace (:title image-src) #"[:]" "_"))
             src     (:img   image-src)
             index   (:index image-src)
             dir     (str *images-dir* "/" title)
