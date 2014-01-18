@@ -13,7 +13,8 @@
 (def ^:dynamic *debug* false)
 (def ^:dynamic *cache-dir* "cache")
 (def ^:dynamic *images-dir* "images")
-(def ^:dynamic *base-url* "http://lj.rossia.org/users/vrotmnen0gi/?skip=3900")
+(def ^:dynamic *base-url* "http://lj.rossia.org/users/vrotmnen0gi/?skip=4500")
+(def ^:dynamic *blacklist* "blacklist.txt")
 
 (def state (atom {
                   :state :running
@@ -28,6 +29,8 @@
                   :timeouts 0
                   :new-pages 0
                   :exceptions []
+                  :files []
+                  :blacklist #{}
                   }))
 
 (declare print-stats)
@@ -239,10 +242,10 @@
   (apply format (apply str "\r" (take n (repeat pat))) v))
 
 (defn- stats-line-numeric [v]
-  (tab-format 14 "%-10s" v))
+  (tab-format (count v) "%-10s" v))
 
 (defn- stats-line-string [v]
-  (tab-format 14 "%-10s" v))
+  (tab-format (count v) "%-10s" v))
 
 
 (defn- stats-headers []
@@ -259,7 +262,8 @@
                       "exist"
                       "disk"
                       "total"
-                      "exc"]))
+                      "exc"
+                      "file"]))
 
 (defn print-stats [m]
   (let [{pg :blog-pages
@@ -273,11 +277,16 @@
          i  :exists } m
          dlq  (-> *pool* .getQueue .size)
          dla  (-> *pool* .getActiveCount)
+         f  (peek (:files @state))
          ex (:exceptions @state)]
     (do
       ;(print (str "\r" @state))
-      (print (stats-line-numeric [pg pn pc dlq dla c e mi un r i (+ r i) (+ c r i) ex]))
+      (print (stats-line-numeric [pg pn pc dlq dla c e mi un r i (+ r i) (+ c r i) ex f]))
       (flush))))
+
+(defn short-name [fname]
+  (str/join "/"
+            (take-last 3 (str/split fname #"/"))))
 
 (defn download-to [src fname-v3]
   (make-dir (path-from fname-v3))
@@ -286,9 +295,20 @@
       (if (= 200 (:status @resp))
         (do (write-byte-array-to fname-v3 (:body @resp))
             (inc-counter :completed)
-            (println fname-v3))
+            (swap! state update-in [:files] conj short-name))
         (println (:error @resp))))
     (catch Exception e #(println e))))
+
+(defn store-blacklist [b-list]
+  (with-open [w (io/writer *blacklist*)]
+    (doseq [l b-list]
+      (.write w l)
+      (.newLine w))))
+
+(defn fetch-blacklist []
+  (with-open [r (io/reader *blacklist*)]
+    (into #{} (line-seq r))))
+
 
 (defn -main []
 ;; work around dangerous default behaviour in Clojure
