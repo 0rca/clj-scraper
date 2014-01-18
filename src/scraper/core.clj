@@ -1,6 +1,6 @@
 (ns scraper.core
   (:require [net.cgrand.enlive-html :as html])
-  (:require [clj-http.lite.client   :as client])
+  (:require [org.httpkit.client     :as http])
   (:require [clojure.java.io        :as io])
   (:require [clojure.string         :as str])
   (:require [clj-time.format        :as tf ])
@@ -13,7 +13,7 @@
 (def ^:dynamic *debug* false)
 (def ^:dynamic *cache-dir* "cache")
 (def ^:dynamic *images-dir* "images")
-(def ^:dynamic *base-url* "http://lj.rossia.org/users/vrotmnen0gi/?skip=4200")
+(def ^:dynamic *base-url* "http://lj.rossia.org/users/vrotmnen0gi/?skip=3900")
 
 (def state (atom {
                   :state :running
@@ -25,7 +25,7 @@
                   :blog-pages 0
                   :cached-pages 0
                   :missing 0
-                  :unauth 0
+                  :timeouts 0
                   :new-pages 0
                   :exceptions []
                   }))
@@ -42,7 +42,13 @@
   `(when *debug* (~@body)))
 
 (defn download-from [url]
-  (client/get url {:as :byte-array}))
+  (let [resp (http/get url {:as :byte-array :timeout  120000 :keepalive 120000})]
+    (when (= 200 (:status @resp))
+      (:body @resp))))
+
+(defn write-byte-array-to [fname b]
+  (with-open [out (io/output-stream (io/file fname))]
+    (.write out b)))
 
 (defn write-file [f stream]
    (with-open [w (clojure.java.io/output-stream f)]
@@ -50,7 +56,8 @@
 
 (defn fetch-url [url]
   (debug (println "Fetching " url))
-  (html/html-resource (java.net.URL. url)))
+  (let [resp (http/get url {:as :stream :keepalive 12000})]
+    (html/html-resource (:body @resp))))
 
 (defn fetch-cached-url [url]
   (debug (println "Fetching" url "from cache"))
@@ -63,7 +70,10 @@
       (do
         (debug (println "MISS: downloading"))
         (inc-counter :new-pages)
-        (write-file path (download-from url))
+        (let [resp (http/get url {:as :byte-array
+                                  :keepalive 60000})]
+          (when (= 200 (:status @resp))
+            (write-file path @resp)))
         (debug (println "OK"))))
 
     (html/html-resource (io/file path))))
@@ -205,14 +215,18 @@
 
 (defn remote-mime? [type url]
   (debug (println "."))
-  (= type (get-in (client/head url) [:headers "content-type"])))
+  (let [resp (http/head url {:keepalive 60000})]
+    (and
+     (= 200  (:status @resp))
+     (= type (get-in @resp [:headers :content-type])))))
+
 
 (def remote-jpeg? (partial remote-mime? "image/jpeg"))
 
 (defn still-exists? [url]
   (and
-   (not (seq? (re-seq #"fastpic\.ru" url)))))
-;   (remote-jpeg? url)))
+;   (not (seq? (re-seq #"fastpic\.ru" url)))))
+   (remote-jpeg? url)))
 
 (defn convert-date [date]
   (let [[_ month day _ year] (first (re-seq #"\[(\w{3})\.\s(\d{1,2})(th|nd|st|rd),\s(\d{4})" date))
@@ -240,7 +254,7 @@
                       "compl"
                       "error"
                       "miss"
-                      "unauth"
+                      "timeouts"
                       "renam"
                       "exist"
                       "disk"
@@ -254,7 +268,7 @@
          c  :completed
          e  :errors
          mi :missing
-         un :unauth
+         un :timeouts
          r  :renamed
          i  :exists } m
          dlq  (-> *pool* .getQueue .size)
@@ -266,16 +280,15 @@
       (flush))))
 
 (defn download-to [src fname-v3]
+  (make-dir (path-from fname-v3))
   (try
-    (make-dir (path-from fname-v3))
-    (write-file fname-v3 (download-from src))
-    (inc-counter :completed)
-    (catch Exception e (condp = (get-in e [:object :status])
-                         404 (inc-counter :missing)
-                         403 (inc-counter :unauth)
-                         (do
-                           ;(swap! state update-in [:exceptions] conj e)
-                           (inc-counter :errors))))))
+    (let [resp (http/get src {:as :byte-array :timeout 300000})]
+      (if (= 200 (:status @resp))
+        (do (write-byte-array-to fname-v3 (:body @resp))
+            (inc-counter :completed)
+            (println fname-v3))
+        (println (:error @resp))))
+    (catch Exception e #(println e))))
 
 (defn -main []
 ;; work around dangerous default behaviour in Clojure
@@ -322,15 +335,6 @@
          (inc-counter :exists)
 
          :else
-         (do
-           (inc-counter :pending)
-           (if (still-exists? src)
-             (.submit *pool* (partial download-to src fname-v3))
-             (inc-counter :missing))))))))
-;;            (.submit *pool*
-;;                     #(try
-;;                        (dec-counter :pending)
-;;                        (if (still-exists? src)
-;;                          (.submit *dl-pool* (partial download-to src fname-v3))
-;;                          (inc-counter :missing))
-;;                        (catch Exception e (inc-counter :missing))))))))))
+         (if (still-exists? src)
+           (.submit *pool* (partial download-to src fname-v3))
+           (inc-counter :missing)))))))
