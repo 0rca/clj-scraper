@@ -84,9 +84,10 @@
             (html/html-resource (io/file path))
             (inc-counter :errors)))))))
 
-;;; xxx unfinished
 (defn sanitize-path [path]
-  (str/trim (str/replace path #"[:/\\]" "_")))
+  (str/replace path #"\s*блеать\s*|#" ""))
+
+;  (str/trim (str/replace path #"[:/\\]" "_")))
 
 (defn links-all [page]
   (map #(:href (:attrs %))
@@ -305,7 +306,7 @@
             dir      (str *images-dir* "/" title)
             fname-v1 (fs/filename-v1 src title date index *images-dir*)
             fname-v2 (fs/filename-v2 src title date index *images-dir*)
-            fname-v3 (fs/filename-v3 src title date index *images-dir*)
+            fname-v3 (sanitize-path (fs/filename-v3 src title date index *images-dir*))
             fname-v0 (fs/filename-v0 src title date index *images-dir*)]
 
         (cond
