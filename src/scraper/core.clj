@@ -36,6 +36,7 @@
                   :last-file  ""
                   :history #{}
                   :url-count 0
+                  :in-history 0
                   }))
 
 (declare print-stats)
@@ -225,7 +226,7 @@
                       "compl"
                       "error"
                       "miss"
-                      "timeouts"
+                      "history"
                       "renam"
                       "exist"
                       "disk"
@@ -240,16 +241,16 @@
          c  :completed
          e  :errors
          mi :missing
-         un :timeouts
          r  :renamed
          u  :url-count
-         i  :exists } m
+         i  :exists
+         h  :in-history} m
          dlq  (-> *pool* .getQueue .size)
          dla  (-> *pool* .getActiveCount)
         f (:last-file @state)]
     (do
       ;(print (str "\r" @state))
-      (print (stats-line-numeric [pg pn pc dlq dla c e mi un r i (+ r i) (+ c r i) u f]))
+      (print (stats-line-numeric [pg pn pc dlq dla c e mi h r i (+ r i) (+ c r i) u f]))
       (flush))))
 ;; EO UI
 
@@ -263,6 +264,8 @@
 ;;             (swap! state assoc :last-file (fs/short-name fname-v3)))
 ;;         (println (:error @resp))))
 ;;     (catch Exception e #(println e))))
+(defn add-to-history [f]
+  (swap! state update-in [:history] conj (.getCanonicalFile (io/file f))))
 
 (defn download-to-v2 [src fname-v3]
   (let [{:keys [exit err out] } (wget "-c" src "-Ptmp")]
@@ -273,6 +276,7 @@
         (fs/make-dir dir)
         (fs/rename source dest)
         (inc-counter :completed)
+        (add-to-history dest)
         (swap! state assoc :last-file (fs/short-name fname-v3))))))
 
 (defn- write-history []
@@ -287,15 +291,24 @@
 (defn- read-history []
   (with-open [in (java.util.zip.GZIPInputStream.
                  (io/input-stream "history.txt.gz"))]
-    (map io/file (str/split (slurp in) #"\n"))))
+    (map #(.getCanonicalFile (io/file %)) (str/split (slurp in) #"\n"))))
 
 (defn- init-history-from-file []
   (swap! state update-in [:history] into (read-history)))
 
 (defn- init-history-from-filesystem []
   (swap! state update-in [:history] into
-         (filter #(.isFile %) (file-seq (io/file *images-dir*)))))
+         (map #(.getCanonicalFile %) (filter #(.isFile %) (file-seq (io/file *images-dir*))))))
 
+
+(defn init-history []
+  (if (fs/exists? "history.txt.gz")
+    (init-history-from-file)
+    (init-history-from-filesystem)))
+
+
+(defn in-history? [f]
+  ((@state :history) (.getCanonicalFile (io/file f))))
 
 
 ;  (swap! state update-in [:history] into (read-string (slurp "history.clj"))))
@@ -306,13 +319,17 @@
 
   (.addShutdownHook
    (Runtime/getRuntime)
-   (Thread. (fn [] (println "Shutting down..."))))
+   (Thread. (fn []
+              (println)
+              (println "Saving history...")
+              (write-history))))
 
   (binding [*debug* false
-            *base-url* "http://lj.rossia.org/users/vrotmnen0gi/"
+            *base-url* "http://lj.rossia.org/users/vrotmnen0gi/?skip=100"
             *next-page-fn* prev-page
             ;*images-dir* "/Users/orca/Downloads/Фото - вротмненоги"
             ]
+    (init-history)
     (println "About"(count (:history @state)) "files already downloaded")
 
     (fs/make-dir *images-dir* *cache-dir*)
@@ -336,23 +353,32 @@
             fname-v0 (fs/filename-v0 src title date index *images-dir*)]
 
         (cond
+         (in-history? fname-v3)
+         (inc-counter :in-history)
+
          (fs/exists? fname-v0)
          (do
            (fs/rename fname-v0 fname-v3)
+           (add-to-history fname-v3)
            (inc-counter :renamed))
 
          (fs/exists? fname-v1)
          (do
            (fs/rename fname-v1 fname-v3)
+           (add-to-history fname-v3)
            (inc-counter :renamed))
 
          (fs/exists? fname-v2)
          (do
            (fs/rename fname-v2 fname-v3)
+           (add-to-history fname-v3)
            (inc-counter :renamed))
 
          (fs/exists? fname-v3)
-         (inc-counter :exists)
+         (do
+           (inc-counter :exists)
+           (add-to-history fname-v3))
+
 
          :else
          (let [host (fs/hostname src)
