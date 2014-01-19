@@ -6,17 +6,19 @@
   (:require [clj-time.format        :as tf ])
   (:require [digest                 :refer [md5]])
   (:require [scraper.fs :as fs])
+  (:require [clojure.java.shell    :refer [sh]])
   (:import  [java.util.concurrent   Executors])
   (:gen-class))
 
-(def ^:dynamic *pool*    (Executors/newFixedThreadPool 8))
-;(def ^:dynamic *dl-pool* (Executors/newFixedThreadPool 2))
+(def ^:dynamic *pool*    (Executors/newFixedThreadPool 4))
 (def ^:dynamic *debug* false)
 (def ^:dynamic *cache-dir* "cache")
 (def ^:dynamic *images-dir* "images")
-(def ^:dynamic *base-url* "http://lj.rossia.org/users/vrotmnen0gi/")
-;(def ^:dynamic *base-url* "http://lj.rossia.org/users/vrotmnen0gi/")
-;(def ^:dynamic *blacklist* "blacklist.txt")
+(def ^:dynamic *base-url* "")
+(def ^:dynamic *next-page-fn* (fn []))
+
+(defn wget [& args]
+  (apply sh "wget" args))
 
 (def state (atom {
                   :state :running
@@ -47,18 +49,18 @@
 (defmacro debug [body]
   `(when *debug* (~@body)))
 
-(defn download-from [url]
-  (let [resp (http/get url {:as :byte-array :timeout  120000 :keepalive 120000})]
-    (when (= 200 (:status @resp))
-      (:body @resp))))
+;; (defn download-from [url]
+;;   (let [resp (http/get url {:as :byte-array :timeout  120000 :keepalive 120000})]
+;;     (when (= 200 (:status @resp))
+;;       (:body @resp))))
 
-(defn write-byte-array-to [fname b]
-  (with-open [out (io/output-stream (io/file fname))]
-    (.write out b)))
+;; (defn write-byte-array-to [fname b]
+;;   (with-open [out (io/output-stream (io/file fname))]
+;;     (.write out b)))
 
-(defn write-file [f stream]
-   (with-open [w (clojure.java.io/output-stream f)]
-     (.write w (:body stream))))
+;; (defn write-file [f stream]
+;;    (with-open [w (clojure.java.io/output-stream f)]
+;;      (.write w (:body stream))))
 
 (defn fetch-url [url]
   (debug (println "Fetching " url))
@@ -72,18 +74,19 @@
     (if (.exists (io/file path))
       (do
         (debug (println "HIT"))
-        (inc-counter :cached-pages))
+        (inc-counter :cached-pages)
+        (html/html-resource (io/file path)))
       (do
         (debug (println "MISS: downloading"))
         (inc-counter :new-pages)
-        (let [resp (http/get url {:as :byte-array
-                                  :keepalive 60000})]
-          (when (= 200 (:status @resp))
-            (write-file path @resp)))
-        (debug (println "OK"))))
+        (let [{exit :exit} (wget "-c" url (str "-P" *cache-dir*))]
+          (if (zero? exit)
+            (html/html-resource (io/file path))
+            (inc-counter :errors)))))))
 
-    (html/html-resource (io/file path))))
-
+;;; xxx unfinished
+(defn sanitize-path [path]
+  (str/trim (str/replace path #"[:/\\]" "_")))
 
 (defn links-all [page]
   (map #(:href (:attrs %))
@@ -129,6 +132,7 @@
     (let [page (fetch-url (url :page))]
       {:page (find-by-text page "later")})))
 
+;; general utility function
 (defn page-seq
   "Returns lazy sequence of pages, paginated by next-page function"
   [url page-fn]
@@ -137,11 +141,13 @@
                   (nil? url))
       (cons url (page-seq (page-fn url) page-fn)))))
 
+;; general utility function
 (defn tag-all-with [xs tag]
   (map #(apply hash-map %)
         (partition 2
                   (interleave (iterate identity tag) xs))))
 
+;; site-specific
 (defn posts-for [url]
   (when (map? url)
     (let [page (fetch-url (url :page))]
@@ -168,13 +174,14 @@
 
 ;; Site-specific stuff
 (defn lj-pages []
-  (page-seq {:page *base-url*} prev-page))
+  (page-seq {:page *base-url*} *next-page-fn*))
 
 (defn lj-posts []
   (post-seq (lj-pages) posts-for))
 
 (defn lj-images []
   (mapcat image-seq (lj-posts)))
+
 
 (defn remote-mime? [type url]
   (debug (println "."))
@@ -183,11 +190,14 @@
      (= 200  (:status @resp))
      (= type (get-in @resp [:headers :content-type])))))
 
+
 (def remote-jpeg? (partial remote-mime? "image/jpeg"))
+
 
 (defn still-exists? [url]
    (remote-jpeg? url))
 
+;; Site-specific
 (defn convert-date [date]
   (let [[_ month day _ year] (first (re-seq #"\[(\w{3})\.\s(\d{1,2})(th|nd|st|rd),\s(\d{4})" date))
         temp-date (str year " " month " " day)
@@ -195,6 +205,7 @@
         date (tf/parse temp-formatter temp-date)]
     (tf/unparse (tf/formatters :date) date)))
 
+;; UI
 (defn- tab-format [n pat v]
   (apply format (apply str "\r" (take n (repeat pat))) v))
 
@@ -240,25 +251,41 @@
       ;(print (str "\r" @state))
       (print (stats-line-numeric [pg pn pc dlq dla c e mi un r i (+ r i) (+ c r i) u f]))
       (flush))))
+;; EO UI
 
+;; (defn download-to [src fname-v3]
+;;   (fs/make-dir (fs/path fname-v3))
+;;   (try
+;;     (let [resp (http/get src {:as :byte-array :timeout 300000})]
+;;       (if (= 200 (:status @resp))
+;;         (do (write-byte-array-to fname-v3 (:body @resp))
+;;             (inc-counter :completed)
+;;             (swap! state assoc :last-file (fs/short-name fname-v3)))
+;;         (println (:error @resp))))
+;;     (catch Exception e #(println e))))
 
-(defn download-to [src fname-v3]
-  (fs/make-dir (fs/path fname-v3))
-  (try
-    (let [resp (http/get src {:as :byte-array :timeout 300000})]
-      (if (= 200 (:status @resp))
-        (do (write-byte-array-to fname-v3 (:body @resp))
-            (inc-counter :completed)
-            (swap! state assoc :last-file (fs/short-name fname-v3)))
-        (println (:error @resp))))
-    (catch Exception e #(println e))))
-
+(defn download-to-v2 [src fname-v3]
+  (let [{:keys [exit err out] } (wget "-c" src "-Ptmp")]
+    (when (zero? exit)
+      (let [dir (fs/path fname-v3)
+            source (str "tmp/" (fs/filename-from src))
+            dest   fname-v3]
+        (fs/make-dir dir)
+        (fs/rename source dest)
+        (inc-counter :completed)
+        (swap! state assoc :last-file (fs/short-name fname-v3))))))
 
 (defn -main []
 ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
 
+  (.addShutdownHook
+   (Runtime/getRuntime)
+   (Thread. (fn [] (println "Shutting down..."))))
+
   (binding [*debug* false
+            *base-url* "http://lj.rossia.org/users/vrotmnen0gi/"
+            *next-page-fn* prev-page
             ;*images-dir* "/Users/orca/Downloads/Фото - вротмненоги"
             ]
     (fs/make-dir *images-dir* *cache-dir*)
@@ -304,5 +331,7 @@
          (let [host (fs/hostname src)
                _    (swap! state update-in [:url-count] inc)]
            (if (still-exists? src)
-             (.submit *pool* (partial download-to src fname-v3))
-             (inc-counter :missing))))))))
+             (.submit *pool* (partial download-to-v2 src fname-v3))
+             (do
+               (inc-counter :missing)
+               (swap! state assoc :last-file src)))))))))

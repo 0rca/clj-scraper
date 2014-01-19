@@ -35,7 +35,7 @@
 (defn path [filename]
   (str/join "/" (butlast (str/split filename #"/"))))
 
-(defn- filename-from [url]
+(defn filename-from [url]
   (last (str/split url #"/")))
 
 (defn filename-v0 [url _ _ _ img-dir]

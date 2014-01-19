@@ -1,0 +1,4 @@
+#!/bin/sh
+
+nginx -p . -c config/site.conf
+
