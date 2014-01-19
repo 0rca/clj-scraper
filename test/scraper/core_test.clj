@@ -1,18 +1,18 @@
 (ns scraper.core-test
   (:require [clojure.test :refer :all]
+            [scraper.fs   :refer :all]
             [scraper.core :refer :all]))
 
 (deftest filename-v*
-  (binding [*images-dir* "images"]
     (testing "v2 filename"
-      (is (= (filename-v2 "http://s017.radikal.ru/i413/1312/6b/3dd009003d85.jpg" "Test" "2013-12-20" 3)
+      (is (= (filename-v2 "http://s017.radikal.ru/i413/1312/6b/3dd009003d85.jpg" "Test" "2013-12-20" 3 "images")
              "images/Test/3-i41313126b3dd009003d85.jpg")))
     (testing "v3 filename"
-      (is (= (filename-v3 "http://s017.radikal.ru/i413/1312/6b/3dd009003d85.jpg" "Test" "2013-12-20" 3)
+      (is (= (filename-v3 "http://s017.radikal.ru/i413/1312/6b/3dd009003d85.jpg" "Test" "2013-12-20" 3 "images")
              "images/Test/2013-12-20/003-90298005.jpg")))
     (testing "v1 filename"
-      (is (= (filename-v1 "http://s017.radikal.ru/i413/1312/6b/3dd009003d85.jpg" "Test" "2013-12-20" 3)
-              "images/Test/3dd009003d85.jpg")))))
+      (is (= (filename-v1 "http://s017.radikal.ru/i413/1312/6b/3dd009003d85.jpg" "Test" "2013-12-20" 3 "images")
+              "images/Test/3dd009003d85.jpg"))))
 
 (deftest convert-date-*
   (testing "should convert to YYYY-MM-DD"

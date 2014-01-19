@@ -5,16 +5,18 @@
   (:require [clojure.string         :as str])
   (:require [clj-time.format        :as tf ])
   (:require [digest                 :refer [md5]])
+  (:require [scraper.fs :as fs])
   (:import  [java.util.concurrent   Executors])
   (:gen-class))
 
-(def ^:dynamic *pool*    (Executors/newFixedThreadPool 2))
+(def ^:dynamic *pool*    (Executors/newFixedThreadPool 8))
 ;(def ^:dynamic *dl-pool* (Executors/newFixedThreadPool 2))
 (def ^:dynamic *debug* false)
 (def ^:dynamic *cache-dir* "cache")
 (def ^:dynamic *images-dir* "images")
-(def ^:dynamic *base-url* "http://lj.rossia.org/users/vrotmnen0gi/?skip=4500")
-(def ^:dynamic *blacklist* "blacklist.txt")
+(def ^:dynamic *base-url* "http://lj.rossia.org/users/vrotmnen0gi/")
+;(def ^:dynamic *base-url* "http://lj.rossia.org/users/vrotmnen0gi/")
+;(def ^:dynamic *blacklist* "blacklist.txt")
 
 (def state (atom {
                   :state :running
@@ -29,8 +31,9 @@
                   :timeouts 0
                   :new-pages 0
                   :exceptions []
-                  :files []
+                  :last-file  ""
                   :blacklist #{}
+                  :url-count 0
                   }))
 
 (declare print-stats)
@@ -145,33 +148,6 @@
       (inc-counter :blog-pages)
       (tag-all-with (find-all-by-text page "Link") :post))))
 
-(defn- filename-from [url]
-  (last (str/split url #"/")))
-
-(defn filename-v0 [url _ _ _]
-  (str *images-dir* "/__unsorted/" (filename-from url)))
-
-(defn filename-v1 [url title date index]
-  (str *images-dir* "/"
-       title "/"
-       (filename-from url)))
-
-(defn filename-v2 [url title date index]
-  (apply str
-         *images-dir* "/"
-         title "/"
-         index "-"
-         (drop 3 (str/split url #"/"))))
-
-(defn filename-v3 [url title date index]
-  (format "%s/%s/%s/%03d-%s.%s"
-          *images-dir*
-          title
-          date
-          index
-          (apply str (take 8 (md5 url)))
-          (last (str/split url #"\."))))
-
 (defn post-seq [pages posts-fn]
   (lazy-seq
     (when (seq? pages)
@@ -192,7 +168,7 @@
 
 ;; Site-specific stuff
 (defn lj-pages []
-  (page-seq {:page *base-url*} next-page))
+  (page-seq {:page *base-url*} prev-page))
 
 (defn lj-posts []
   (post-seq (lj-pages) posts-for))
@@ -200,36 +176,17 @@
 (defn lj-images []
   (mapcat image-seq (lj-posts)))
 
-(defn make-dir [& dirs]
-  (doseq [v dirs]
-    (let [dir (io/file v)]
-      (when-not (.exists dir)
-        (.mkdirs dir)))))
-
-(defn path-from [filename]
-  (str/join "/" (butlast (str/split filename #"/"))))
-
-(defn do-rename [f1 f2]
-  (make-dir (path-from f2))
-  (.renameTo (io/file f1) (io/file f2)))
-
-(defn exists? [f]
-  (.exists (io/file f)))
-
 (defn remote-mime? [type url]
   (debug (println "."))
-  (let [resp (http/head url {:keepalive 60000})]
+  (let [resp (http/head url {:keepalive 600000})]
     (and
      (= 200  (:status @resp))
      (= type (get-in @resp [:headers :content-type])))))
 
-
 (def remote-jpeg? (partial remote-mime? "image/jpeg"))
 
 (defn still-exists? [url]
-  (and
-;   (not (seq? (re-seq #"fastpic\.ru" url)))))
-   (remote-jpeg? url)))
+   (remote-jpeg? url))
 
 (defn convert-date [date]
   (let [[_ month day _ year] (first (re-seq #"\[(\w{3})\.\s(\d{1,2})(th|nd|st|rd),\s(\d{4})" date))
@@ -262,7 +219,7 @@
                       "exist"
                       "disk"
                       "total"
-                      "exc"
+                      "urls"
                       "file"]))
 
 (defn print-stats [m]
@@ -274,40 +231,27 @@
          mi :missing
          un :timeouts
          r  :renamed
+         u  :url-count
          i  :exists } m
          dlq  (-> *pool* .getQueue .size)
          dla  (-> *pool* .getActiveCount)
-         f  (peek (:files @state))
-         ex (:exceptions @state)]
+        f (:last-file @state)]
     (do
       ;(print (str "\r" @state))
-      (print (stats-line-numeric [pg pn pc dlq dla c e mi un r i (+ r i) (+ c r i) ex f]))
+      (print (stats-line-numeric [pg pn pc dlq dla c e mi un r i (+ r i) (+ c r i) u f]))
       (flush))))
 
-(defn short-name [fname]
-  (str/join "/"
-            (take-last 3 (str/split fname #"/"))))
 
 (defn download-to [src fname-v3]
-  (make-dir (path-from fname-v3))
+  (fs/make-dir (fs/path fname-v3))
   (try
     (let [resp (http/get src {:as :byte-array :timeout 300000})]
       (if (= 200 (:status @resp))
         (do (write-byte-array-to fname-v3 (:body @resp))
             (inc-counter :completed)
-            (swap! state update-in [:files] conj short-name))
+            (swap! state assoc :last-file (fs/short-name fname-v3)))
         (println (:error @resp))))
     (catch Exception e #(println e))))
-
-(defn store-blacklist [b-list]
-  (with-open [w (io/writer *blacklist*)]
-    (doseq [l b-list]
-      (.write w l)
-      (.newLine w))))
-
-(defn fetch-blacklist []
-  (with-open [r (io/reader *blacklist*)]
-    (into #{} (line-seq r))))
 
 
 (defn -main []
@@ -315,15 +259,16 @@
   (alter-var-root #'*read-eval* (constantly false))
 
   (binding [*debug* false
-            *images-dir* "/Users/orca/Downloads/Фото - вротмненоги"]
-    (make-dir *images-dir* *cache-dir*)
+            ;*images-dir* "/Users/orca/Downloads/Фото - вротмненоги"
+            ]
+    (fs/make-dir *images-dir* *cache-dir*)
 
     (println (stats-headers))
 
     ;; UI update thread
     (.start (Thread. #(while true
                         (print-stats @state)
-                        (Thread/sleep 250))))
+                        (Thread/sleep 500))))
 
     (doseq [image-src (lj-images)]
       (let [title   (str/trim (str/replace (:title image-src) #"[:/\\]" "_"))
@@ -331,30 +276,33 @@
             index   (:index image-src)
             date     (convert-date (:date  image-src))
             dir      (str *images-dir* "/" title)
-            fname-v1 (filename-v1 src title date index)
-            fname-v2 (filename-v2 src title date index)
-            fname-v3 (filename-v3 src title date index)
-            fname-v0 (filename-v0 src title date index)]
+            fname-v1 (fs/filename-v1 src title date index *images-dir*)
+            fname-v2 (fs/filename-v2 src title date index *images-dir*)
+            fname-v3 (fs/filename-v3 src title date index *images-dir*)
+            fname-v0 (fs/filename-v0 src title date index *images-dir*)]
+
         (cond
-         (exists? fname-v0)
+         (fs/exists? fname-v0)
          (do
-           (do-rename fname-v0 fname-v3)
+           (fs/rename fname-v0 fname-v3)
            (inc-counter :renamed))
 
-         (exists? fname-v1)
+         (fs/exists? fname-v1)
          (do
-           (do-rename fname-v1 fname-v3)
+           (fs/rename fname-v1 fname-v3)
            (inc-counter :renamed))
 
-         (exists? fname-v2)
+         (fs/exists? fname-v2)
          (do
-           (do-rename fname-v2 fname-v3)
+           (fs/rename fname-v2 fname-v3)
            (inc-counter :renamed))
 
-         (exists? fname-v3)
+         (fs/exists? fname-v3)
          (inc-counter :exists)
 
          :else
-         (if (still-exists? src)
-           (.submit *pool* (partial download-to src fname-v3))
-           (inc-counter :missing)))))))
+         (let [host (fs/hostname src)
+               _    (swap! state update-in [:url-count] inc)]
+           (if (still-exists? src)
+             (.submit *pool* (partial download-to src fname-v3))
+             (inc-counter :missing))))))))
