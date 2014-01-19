@@ -34,7 +34,7 @@
                   :new-pages 0
                   :exceptions []
                   :last-file  ""
-                  :blacklist #{}
+                  :history #{}
                   :url-count 0
                   }))
 
@@ -87,7 +87,6 @@
 (defn sanitize-path [path]
   (str/replace path #"\s*блеать\s*|#" ""))
 
-;  (str/trim (str/replace path #"[:/\\]" "_")))
 
 (defn links-all [page]
   (map #(:href (:attrs %))
@@ -276,6 +275,31 @@
         (inc-counter :completed)
         (swap! state assoc :last-file (fs/short-name fname-v3))))))
 
+(defn- write-history []
+  (with-open [w (-> "history.txt.gz"
+                    io/output-stream
+                    java.util.zip.GZIPOutputStream.
+                    io/writer)]
+    (binding [*out* w]
+      (doseq [f (:history @state)]
+        (println (.getPath f))))))
+
+(defn- read-history []
+  (with-open [in (java.util.zip.GZIPInputStream.
+                 (io/input-stream "history.txt.gz"))]
+    (map io/file (str/split (slurp in) #"\n"))))
+
+(defn- init-history-from-file []
+  (swap! state update-in [:history] into (read-history)))
+
+(defn- init-history-from-filesystem []
+  (swap! state update-in [:history] into
+         (filter #(.isFile %) (file-seq (io/file *images-dir*)))))
+
+
+
+;  (swap! state update-in [:history] into (read-string (slurp "history.clj"))))
+
 (defn -main []
 ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
@@ -289,6 +313,8 @@
             *next-page-fn* prev-page
             ;*images-dir* "/Users/orca/Downloads/Фото - вротмненоги"
             ]
+    (println "About"(count (:history @state)) "files already downloaded")
+
     (fs/make-dir *images-dir* *cache-dir*)
 
     (println (stats-headers))
