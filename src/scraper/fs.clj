@@ -25,37 +25,20 @@
       (when-not (.exists dir)
         (.mkdirs dir)))))
 
-(defn path-from [filename]
-  (str/join "/" (butlast (str/split filename #"/"))))
+(defn path [filename]
+  (.getParent (io/file filename)))
 
 (defn rename [f1 f2]
-  (make-dir (path-from f2))
+  (make-dir (path f2))
   (.renameTo (io/file f1) (io/file f2)))
 
-(defn path [filename]
-  (str/join "/" (butlast (str/split filename #"/"))))
-
 (defn filename-from [url]
-  (last (str/split url #"/")))
-
-(defn filename-v0 [url _ _ _ img-dir]
-  (str img-dir "/__unsorted/" (filename-from url)))
-
-(defn filename-v1 [url title date index img-dir]
-  (str img-dir "/"
-       title "/"
-       (filename-from url)))
-
-(defn filename-v2 [url title date index img-dir]
-  (apply str
-         img-dir "/"
-         title "/"
-         index "-"
-         (drop 3 (str/split url #"/"))))
+  (.getName (io/file url)))
 
 (defn filename-v3 [url title date index img-dir]
-  (format "%s/%s/%s/%03d-%s.%s"
+  (format "%s/%s/%s/%s/%03d-%s.%s"
           img-dir
+          (first title)
           title
           date
           index
