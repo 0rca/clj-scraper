@@ -13,14 +13,6 @@
     (is (= (convert-date "[Jan. 13th, 2014|07:00 am]")
            "2014-01-13-0700"))))
 
-(deftest test-1
-  (testing "next?"
-    (is (= true (next? "http://lj.rossia.org/users/vrotmnen0gi/?skip=20")))))
-
-(deftest test-2
-  (testing "post?"
-    (is (= true (post? "http://lj.rossia.org/users/vrotmnen0gi/993483.html")))))
-
 (deftest test-3
   (testing "jpeg?"
     (is (= true (jpeg? "http://example.com/img/123.jpg")))

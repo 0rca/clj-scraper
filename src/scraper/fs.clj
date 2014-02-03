@@ -35,6 +35,9 @@
 (defn filename-from [url]
   (.getName (io/file url)))
 
+(defn cached-name [url dir]
+  (format "%s/%s" dir (apply str (take 16 (md5 url)))))
+
 (defn filename-v3 [url title date index img-dir]
   (format "%s/%s/%s/%s/%03d-%s.%s"
           img-dir

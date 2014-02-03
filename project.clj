@@ -8,5 +8,12 @@
                  [enlive "1.1.5"]
                  [clj-time "0.6.0"]
                  [org.clojure/tools.cli "0.2.4"]
+                 [org.apache.commons/commons-io "1.3.2"]
+                 [liberator "0.10.0"]
+                 [compojure "1.1.6"]
+                 [ring/ring-core "1.2.1"]
+                 [ring/ring-jetty-adapter "1.2.1"]
+                 [cheshire "5.3.1"]
+                 [org.clojure/tools.cli "0.3.1"]
                  [digest "1.4.3"]]
   :main scraper.core)

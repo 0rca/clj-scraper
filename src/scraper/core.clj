@@ -6,23 +6,25 @@
   (:require [clj-time.format        :as tf ])
   (:require [digest                 :refer [md5]])
   (:require [scraper.fs :as fs])
-  (:require [clojure.java.shell    :refer [sh]])
   (:require [clojure.tools.cli     :refer [cli]])
   (:import  [java.util.concurrent   Executors])
+  (:import  [org.apache.commons.io  FileUtils])
+  (:require [liberator.core :refer [resource defresource]]
+            [ring.middleware.params :refer [wrap-params]]
+            [ring.adapter.jetty :refer [run-jetty]]
+            [compojure.core :refer [defroutes ANY]])
+  (:require [cheshire.core :as json :only [generate-string]])
   (:gen-class))
 
 (def ^:dynamic *pool*)
 (def ^:dynamic *debug* false)
-(def ^:dynamic *cache-dir*)
-(def ^:dynamic *images-dir*)
-(def ^:dynamic *base-url* "http://lj.rossia.org/users/vrotmnen0gi/")
-(def ^:dynamic *next-page-fn*)
-(def ^:dynamic *use-cache*)
+(def ^:dynamic *cache-dir* "cache")
+(def ^:dynamic *images-dir* "images")
+(def ^:dynamic *base-url*)
 
-(defn wget [& args]
-  (apply sh "wget" "-T 30" args))
 
 (def state (atom {
+                  :running true
                   :completed 0
                   :errors 0
                   :missing 0
@@ -33,8 +35,6 @@
                   :page-cache {}
                   }))
 
-(declare print-stats)
-
 (defn inc-counter [c]
   (swap! state update-in [c] inc))
 
@@ -44,17 +44,36 @@
 (defmacro debug [body]
   `(when *debug* (~@body)))
 
+(defn jget [url file]
+  (FileUtils/copyURLToFile (java.net.URL. url) (io/file file)))
+
+(defn serialize-seq [what where]
+  (spit where (pr-str what)))
+
+(defn deserialize-seq [from]
+  (read-string (slurp from)))
+
+(declare print-stats)
+
 (defn cache-page! [url content]
-  (swap! state update-in [:page-cache] assoc url content))
+  (let [filename (fs/cached-name url *cache-dir*)]
+    (serialize-seq content filename)
+    (swap! state update-in [:page-cache] assoc url filename)))
 
 (defn cached-page [url]
-  (get-in @state [:page-cache url]))
+  (let [filename (or (get-in @state [:page-cache url])
+                     (fs/cached-name url *cache-dir*))]
+    (swap! state update-in [:page-cache] assoc url filename)
+    (deserialize-seq filename)))
 
 (defn cached? [url]
-  (contains? (:page-cache @state) url))
+  (or (contains? (:page-cache @state) url)
+      (fs/exists? (fs/cached-name url *cache-dir*))))
 
 (defn fetch-resource [url]
-  (html/html-resource (java.net.URL. url)))
+  (try
+    (html/html-resource (java.net.URL. url))
+    (catch java.io.IOException e (inc-counter :errors) nil)))
 
 (defn fetch-maybe-cached-resource [url]
   (if (cached? url)
@@ -62,23 +81,6 @@
     (when-let [content (fetch-resource url)]
       (cache-page! url content)
       content)))
-
-(defn fetch-cached-url [url]
-  (debug (println "Fetching" url "from cache"))
-  (let [file (last (str/split url #"/"))
-        path (str *cache-dir* "/" file)]
-    (if (.exists (io/file path))
-      (do
-        (debug (println "HIT"))
-        (inc-counter :cached-pages)
-        (html/html-resource (io/file path)))
-      (do
-        (debug (println "MISS: downloading"))
-        (inc-counter :new-pages)
-        (let [{exit :exit} (wget "-c" url (str "-P" *cache-dir*))]
-          (if (zero? exit)
-            (html/html-resource (io/file path))
-            (inc-counter :errors)))))))
 
 (defn sanitize-path [path]
   (str/replace path #"\s*блеать\s*|#" ""))
@@ -90,7 +92,7 @@
 (defn find-all-by-text [page text]
   (map #(-> % :attrs :href)
         (filter #(= text (-> % :content first))
-                 (html/select page [:a]))))
+                 (html/select page [[:a (html/attr? :href)]]))))
 
 (defn find-by-text [page text]
   (first (find-all-by-text page text)))
@@ -98,7 +100,7 @@
 
 (defn next-by-text [text url]
   (when-not (nil? url)
-    (when-let [content (fetch-maybe-cached-resource url)]
+    (when-let [content (fetch-resource url)]
       (find-by-text content text))))
 
 
@@ -121,26 +123,7 @@
                (html/select content [[:a (html/attr? :href)]]))))
 
 
-(def vrotmne-prev (partial next-by-text "earlier"))
 
-(def vrotmne-next (partial next-by-text "later"))
-
-(defn vrotmne-posts [url]
-  (let [content (fetch-maybe-cached-resource url)]
-    (find-all-by-text content "Link")))
-
-
-(defn vrotmne-images [url]
-  (let [content (fetch-maybe-cached-resource url)
-        jpegs   (find-all-jpeg-links content)
-        date    (html/text (second (html/select content [:td.index])))
-        title   (html/text (second (html/select content [:td.caption])))]
-    (map #(array-map :index %1
-                     :date (convert-date date)
-                     :title (str/trim title)
-                     :url %2)
-         (range)
-         jpegs)))
 
 (defn remote-mime? [type url]
   (debug (println "."))
@@ -177,8 +160,13 @@
                       "history"
                       "space"
                       "file"]))
+(defn kbytes [b]
+  (int (/ b 1024)))
 
-(defn print-stats [m]
+(defn gbytes [b]
+  (-> b kbytes kbytes kbytes))
+
+(defn stats-array [m]
   (let [{
          pc :cached-pages
          c  :completed
@@ -191,9 +179,19 @@
          dlq  (-> pool .getQueue .size)
          dla  (-> pool .getActiveCount)
          f (:last-file @state)]
-    (do
-      (print (stats-line-numeric [cs dlq dla c e mi h (int (/ s (* 1024 1024 1024))) (str f " ")]))
-      (flush))))
+    [cs dlq dla c e mi h (str (gbytes s) "G") (str f " ")]))
+
+(defn stats-map [m]
+  (zipmap [:cached :download-queued :download-active :completed :errors :missing :history :disk-space :last-file]
+          (stats-array m)))
+
+(defn stats-str [m]
+  (stats-line-numeric (stats-array m)))
+
+(defn print-stats [m]
+  (do
+    (print (stats-str m))
+    (flush)))
 ;; EO UI
 
 (defn history-entry [file]
@@ -202,28 +200,33 @@
 (defn add-to-history [f]
   (swap! state update-in [:history] into (history-entry (io/file f))))
 
-(defn download-to [src fname-v3]
-  (let [{:keys [exit err out] } (wget "-c" src "-Ptmp")]
-    (if (zero? exit)
-      (let [dir (fs/path fname-v3)
-            source (str "tmp/" (fs/filename-from src))
-            dest   fname-v3]
-        (fs/make-dir dir)
-        (fs/rename source dest)
-        (inc-counter :completed)
-        (add-to-history dest)
-        (swap! state assoc :last-file (fs/short-name fname-v3)))
+(defn download-to [src fname]
+  (try
+    (let [tmpfile (str "tmp/" (fs/filename-from src))]
+      (jget src tmpfile)
+      (fs/make-dir (fs/path fname))
+      (fs/rename tmpfile fname)
+      (inc-counter :completed)
+      (add-to-history fname)
+      (swap! state assoc :last-file (fs/short-name fname)))
+    (catch java.io.IOException e
       (inc-counter :errors))))
 
-(defn- write-history []
-  (with-open [w (-> "history.txt.gz"
+
+(defn zserialize-seq [what where]
+  (with-open [w (-> where
                     io/output-stream
                     java.util.zip.GZIPOutputStream.
                     io/writer)]
-    (binding [*out* w]
-      (doseq [f (:history @state)]
-        (println f)))))
+    (binding [*out* w] (pr w))))
 
+(defn- write-history []
+  (serialize-seq (:history @state) "history.txt.gz"))
+
+(defn zdeserialize-seq [from]
+  (with-open [in (java.util.zip.GZIPInputStream.
+                 (io/input-stream from))]
+    (mapcat read-string (str/split (slurp in) #"\n"))))
 
 (defn- read-history []
   (with-open [in (java.util.zip.GZIPInputStream.
@@ -247,38 +250,184 @@
 (defn in-history? [f]
   (get (@state :history) (.getName (io/file f))))
 
-(def app-specs [["-s" "--skip" "Number of posts to skip"
-                 :default 0 :parse-fn #(Integer. %)]
-;;                 ["-r" "--reverse" "Reverse direction of scraping"
-;;                  :default false :flag true]
+(def app-specs [
                 ["-c" "--cache" "Cache directory"
                  :default "cache"]
-                ["-i" "--images" "Images directory"
+                ["-o" "--output" "Images directory"
                  :default "images"]
-                ["-C" "--cache-only" "Use only cached posts only"
-                 :default false]
                 ["-w" "--workers" "Number of download workers"
                  :default 4 :parse-fn #(Integer. %)]
                 ["-d" "--debug" "Display debug information"
                  :default false]
+                ["-s" "--source" "Website to download from"
+                 :default "vrotmne"]
                 ["-l" "--list-only" "Save url into list, instead"
                  :default false :flag true]
                 ["-h" "--help" "Print this help" :default false :flag true]
                 ])
 
-(defn paginate [url f]
-  (take-while (complement nil?) (iterate f url)))
+(defn get-attr [el attr]
+  (get-in el [:attrs attr]))
 
-(defn scrape [urls f]
-  (lazy-seq (mapcat f urls)))
+(defn paginate [f url]
+  (lazy-seq
+   (when-not (nil? url)
+     (cons url (paginate f (f url))))))
+;;  (take-while (complement nil?) (iterate f url)))
 
-(def lj-pages  (paginate *base-url* vrotmne-prev))
-(def lj-posts  (scrape lj-pages vrotmne-posts))
-(def lj-images (scrape lj-posts vrotmne-images))
+(defn paginate-1 [f url host]
+  (paginate (fn [url]
+              (let [content (fetch-resource url)
+                    paginator (f content)
+                    base (java.net.URL. (.getProtocol url) (.getHost url) (.getPort url))]
+                (when-not (nil? paginator)
+                  (when-let [href (get-attr paginator :href)]
+                    (str base href)))))
+            url))
+
+(defn paginate-2 [url f]
+  (paginate (fn [url]
+              (let [uri (java.net.URI. url)
+                    content (fetch-maybe-cached-resource url)
+                    paginator (f content)]
+                (when-not (nil? paginator)
+                  (when-let [href (get-attr paginator :href)]
+                    (str (.resolve uri href))))))
+            url))
+;; xxx
+
+(defn scrape [f urls]
+;;  (println (f (first urls)) "\n")
+;;   (concat [] (lazy-seq
+;;    (when (seq urls)
+;;      (when-not (nil? (first urls))
+;;       (concat (f (first urls)) (scrape f (rest urls))))))))
+  (concat [] (lazy-seq
+              (when-not (empty? urls)
+                (when-let [head (f (first urls))]
+                  (concat head (scrape f (rest urls))))))))
+
+
+(defn lj-pages []
+  (paginate
+   (partial next-by-text "earlier")
+   "http://lj.rossia.org/users/vrotmnen0gi/"))
+
+(defn lj-posts []
+  (scrape
+   (fn [url]
+     (let [content (fetch-resource url)]
+       (find-all-by-text content "Link")))
+   (lj-pages)))
+
+(defn lj-images []
+  (scrape
+   (fn [url]
+     (let [content (fetch-maybe-cached-resource url)
+           jpegs   (find-all-jpeg-links content)
+           date    (html/text (second (html/select content [:td.index])))
+           title   (html/text (second (html/select content [:td.caption])))]
+       (map #(array-map :index %1
+                        :date (convert-date date)
+                        :title (str/trim title)
+                        :url %2)
+            (range)
+            jpegs)))
+   (lj-posts)))
+
+
+
+
+;;; common pagination functions library
+;; (defn find-all-by-text [page text]
+;;   (map #(-> % :attrs :href)
+;;         (filter #(= text (-> % :content first))
+;;                  (html/select page [[:a (html/attr? :href)]]))))
+
+(defn paginate-rel [rel-text]
+  (fn [content]
+    (first (filter #(= rel-text (get-attr % :rel))
+                   (html/select content [[:a (html/attr? :rel)]])))))
+
+(defn paginate-text [text]
+  (fn [content]
+    (first
+      (filter #(= text (-> % :content first))
+              (html/select content [[:a (html/attr? :href)]])))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; RAILSCASTS
+;;
+(defn railscasts-pages-count []
+  (count
+    (paginate-2 "http://www.railscasts.com/?page=41"
+                (paginate-rel "next"))))
+
+(defn railscasts-episodes []
+  (scrape (fn [url]
+            (let [content (fetch-maybe-cached-resource url)]
+              (map #(array-map url (html/text %)) (html/select content [:h2 :a]))))
+          (paginate-2 "http://railscasts.com/?page=41"
+                      (paginate-rel "next"))))
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; National Geographic
+;;
+(defn ngo-pages-landscapes []
+  (paginate-2 "http://photography.nationalgeographic.com/photography/photo-of-the-day/landscapes/"
+              (paginate-text "Next »")))
+
+(defn ngo-pages-nature-and-weather []
+  (paginate-2 "http://photography.nationalgeographic.com/photography/photo-of-the-day/nature-weather/"
+              (paginate-text "Next »")))
+
+(defn ngo-image-pages [pages]
+  (scrape
+   (fn [url]
+     (let [content (fetch-maybe-cached-resource url)
+           links   (html/select content [:div#search_results :> :div :> :a])
+           url-fn  (fn [url]
+                     (if (= \/ (first url))
+                       (str "http://photography.nationalgeographic.com" url)
+                       url))]
+       (map url-fn (map #(get-in % [:attrs :href]) links))))
+   pages))
+
+(defn ngo-download-links [pages]
+  (scrape
+   (fn [url]
+     (let [content (fetch-maybe-cached-resource url)]
+       (map #(str "http:" %) (map #(get-attr % :href) (html/select content [:div.download_link :a])))))
+   (ngo-image-pages pages)))
+
+
+;;---------------------------------------
+
+(defresource status
+  :available-media-types ["application/json"]
+  :handle-ok (fn [_] (json/generate-string (stats-map @state))))
+
+(defroutes app
+  (ANY "/foo" [] (resource :available-media-types ["text/html"]
+                           :handle-ok "<html>Hello, Internet.</html>"))
+
+  (ANY "/status" [] status))
+
+(def handler
+  (-> app
+      (wrap-params)))
+
 
 (defn -main [& args]
 ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
+
+  (.start (Thread. #(run-jetty #'handler {:port 3000}) "Jetty"))
 
   (let [[opts args banner] (apply cli args app-specs)]
 
@@ -289,13 +438,12 @@
     (println opts)
 
     (binding [*debug* (:debug opts)
-              *base-url* (if (zero? (:skip opts))
-                           "http://lj.rossia.org/users/vrotmnen0gi/"
-                           (str "http://lj.rossia.org/users/vrotmnen0gi/?skip=" (:skip opts)))
-              *images-dir* (:images opts)
+;;               *base-url* (if (zero? (:skip opts))
+;;                            "http://lj.rossia.org/users/vrotmnen0gi/"
+;;                            (str "http://lj.rossia.org/users/vrotmnen0gi/?skip=" (:skip opts)))
+              *images-dir* (:output opts)
               *cache-dir*  (:cache  opts)
               *pool* (Executors/newFixedThreadPool (:workers opts))
-              *use-cache* (:cache-only opts)
               ]
 
       (swap! state assoc :pool *pool*)
@@ -315,34 +463,37 @@
       ;; UI setup
       (when-not (:list-only opts)
         (println (stats-headers))
-        (.start (Thread. #(while true
+        (.start (Thread. #(while (@state :running)
                             (print-stats @state)
-                            (Thread/sleep 150)))))
+                            (Thread/sleep 150))
+                         "UI Updates")))
 
-      (doseq [image lj-images]
-        (let [title (:title image)
-              src   (:url   image)
-              index (:index image)
-              date  (:date  image)
-              di    (str *images-dir* "/" title)
-              fname (sanitize-path (fs/filename-v3 src title date index *images-dir*))]
+      (cond
+        (= "ngo" (:source opts))
+        (doseq [image (ngo-download-links (concat (ngo-pages-landscapes)
+                                                  (ngo-pages-nature-and-weather)))]
+          (if-not (in-history? image)
+            (.submit *pool* (partial download-to image (str *images-dir* "/" (fs/filename-from image))))
+            (inc-counter :in-history)))
 
-          ;; (when (< (.getUsableSpace (io/file ".")) (* 100 1024 1024))
-          ;;   (do
-          ;;     (println "Low disk space. Exiting")
-          ;;     (System/exit 0)))
+        (= "vrotmne" (:source opts))
+        (doseq [image (lj-images)]
+          (let [title (:title image)
+                src   (:url   image)
+                index (:index image)
+                date  (:date  image)
+                di    (str *images-dir* "/" title)
+                fname (sanitize-path (fs/filename-v3 src title date index *images-dir*))]
 
-          (cond
-           (in-history? fname)
-           (inc-counter :in-history)
+            (if-not (in-history? fname)
+              (if (still-exists? src)
+                (.submit *pool* (partial download-to src fname))
+                (inc-counter :missing))
+              (do
+                ;(swap! state assoc :running false)
+                ;(System/exit 0)
+                (inc-counter :in-history))))))
 
-           :else
-           (let [host (fs/hostname src)
-                 _    (swap! state update-in [:url-count] inc)]
-             (if (:list-only opts)
-               (println src)
-               (if (still-exists? src)
-                 (.submit *pool* (partial download-to src fname))
-                 (do
-                   (inc-counter :missing)
-                   (swap! state assoc :last-file src)))))))))))
+      (swap! state assoc :running false)
+      )))
+
