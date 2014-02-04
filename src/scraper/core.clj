@@ -6,6 +6,7 @@
   (:require [clj-time.format        :as tf ])
   (:require [digest                 :refer [md5]])
   (:require [scraper.fs :as fs])
+  (:require [scraper.ui :as ui])
   (:require [clojure.tools.cli     :refer [cli]])
   (:import  [java.util.concurrent   Executors])
   (:import  [org.apache.commons.io  FileUtils])
@@ -21,7 +22,6 @@
 (def ^:dynamic *cache-dir* "cache")
 (def ^:dynamic *images-dir* "images")
 (def ^:dynamic *base-url*)
-
 
 (def state (atom {
                   :running true
@@ -52,8 +52,6 @@
 
 (defn deserialize-seq [from]
   (read-string (slurp from)))
-
-(declare print-stats)
 
 (defn cache-page! [url content]
   (let [filename (fs/cached-name url *cache-dir*)]
@@ -122,9 +120,6 @@
           (map (fn [tag] (get-in tag [:attrs :href]))
                (html/select content [[:a (html/attr? :href)]]))))
 
-
-
-
 (defn remote-mime? [type url]
   (debug (println "."))
   (let [resp (http/head url {:keepalive 600000})]
@@ -138,61 +133,6 @@
 (defn still-exists? [url]
    (remote-jpeg? url))
 
-;; UI
-(defn- tab-format [n pat v]
-  (apply format (apply str "\r" (take n (repeat pat))) v))
-
-(defn- stats-line-numeric [v]
-  (tab-format (count v) "%-12s" v))
-
-(defn- stats-line-string [v]
-  (tab-format (count v) "%-12s" v))
-
-
-(defn- stats-headers []
-  (stats-line-string [
-                      "cache"
-                      "dlque"
-                      "dlact"
-                      "compl"
-                      "error"
-                      "miss"
-                      "history"
-                      "space"
-                      "file"]))
-(defn kbytes [b]
-  (int (/ b 1024)))
-
-(defn gbytes [b]
-  (-> b kbytes kbytes kbytes))
-
-(defn stats-array [m]
-  (let [{
-         pc :cached-pages
-         c  :completed
-         e  :errors
-         mi :missing
-         h  :in-history
-         pool :pool} m
-         cs (count (:page-cache m))
-         s  (.getUsableSpace (io/file "."))
-         dlq  (-> pool .getQueue .size)
-         dla  (-> pool .getActiveCount)
-         f (:last-file @state)]
-    [cs dlq dla c e mi h (str (gbytes s) "G") (str f " ")]))
-
-(defn stats-map [m]
-  (zipmap [:cached :download-queued :download-active :completed :errors :missing :history :disk-space :last-file]
-          (stats-array m)))
-
-(defn stats-str [m]
-  (stats-line-numeric (stats-array m)))
-
-(defn print-stats [m]
-  (do
-    (print (stats-str m))
-    (flush)))
-;; EO UI
 
 (defn history-entry [file]
   (hash-map (.getName file) file))
@@ -200,7 +140,9 @@
 (defn add-to-history [f]
   (swap! state update-in [:history] into (history-entry (io/file f))))
 
-(defn download-to [src fname]
+(defn download-to
+  "Download a file from a URI"
+  [src fname]
   (try
     (let [tmpfile (str "tmp/" (fs/filename-from src))]
       (jget src tmpfile)
@@ -266,26 +208,21 @@
                 ["-h" "--help" "Print this help" :default false :flag true]
                 ])
 
-(defn get-attr [el attr]
+(defn get-attr
+  "Return atribute value of an html element"
+  [el attr]
   (get-in el [:attrs attr]))
 
-(defn paginate [f url]
+(defn paginate
+  "Generic low-level pagination function"
+  [f url]
   (lazy-seq
    (when-not (nil? url)
      (cons url (paginate f (f url))))))
-;;  (take-while (complement nil?) (iterate f url)))
 
-(defn paginate-1 [f url host]
-  (paginate (fn [url]
-              (let [content (fetch-resource url)
-                    paginator (f content)
-                    base (java.net.URL. (.getProtocol url) (.getHost url) (.getPort url))]
-                (when-not (nil? paginator)
-                  (when-let [href (get-attr paginator :href)]
-                    (str base href)))))
-            url))
-
-(defn paginate-2 [url f]
+(defn paginate-2
+  "Mid-level pagination function that takes care of resource fetching and caching"
+  [url f]
   (paginate (fn [url]
               (let [uri (java.net.URI. url)
                     content (fetch-maybe-cached-resource url)
@@ -294,14 +231,23 @@
                   (when-let [href (get-attr paginator :href)]
                     (str (.resolve uri href))))))
             url))
-;; xxx
 
-(defn scrape [f urls]
-;;  (println (f (first urls)) "\n")
-;;   (concat [] (lazy-seq
-;;    (when (seq urls)
-;;      (when-not (nil? (first urls))
-;;       (concat (f (first urls)) (scrape f (rest urls))))))))
+(defn paginate-1
+  "Mid-level pagination function that takes care of resource fetching,
+   non-caching variant"
+  [url f]
+  (paginate (fn [url]
+              (let [uri (java.net.URI. url)
+                    content (fetch-resource url)
+                    paginator (f content)]
+                (when-not (nil? paginator)
+                  (when-let [href (get-attr paginator :href)]
+                    (str (.resolve uri href))))))
+            url))
+
+(defn scrape
+  "Generic low-level scraping function"
+  [f urls]
   (concat [] (lazy-seq
               (when-not (empty? urls)
                 (when-let [head (f (first urls))]
@@ -313,14 +259,14 @@
    (partial next-by-text "earlier")
    "http://lj.rossia.org/users/vrotmnen0gi/"))
 
-(defn lj-posts []
+(defn lj-posts [pages]
   (scrape
    (fn [url]
      (let [content (fetch-resource url)]
        (find-all-by-text content "Link")))
-   (lj-pages)))
+   (pages)))
 
-(defn lj-images []
+(defn lj-images [pages]
   (scrape
    (fn [url]
      (let [content (fetch-maybe-cached-resource url)
@@ -333,16 +279,8 @@
                         :url %2)
             (range)
             jpegs)))
-   (lj-posts)))
+   (lj-posts pages)))
 
-
-
-
-;;; common pagination functions library
-;; (defn find-all-by-text [page text]
-;;   (map #(-> % :attrs :href)
-;;         (filter #(= text (-> % :content first))
-;;                  (html/select page [[:a (html/attr? :href)]]))))
 
 (defn paginate-rel [rel-text]
   (fn [content]
@@ -354,6 +292,13 @@
     (first
       (filter #(= text (-> % :content first))
               (html/select content [[:a (html/attr? :href)]])))))
+
+(defn paginate-class [klass]
+  (fn [content]
+    (first
+      (filter #(= klass (get-attr % :class))
+              (html/select content [[:a (html/attr? :href)]])))))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
@@ -404,13 +349,24 @@
      (let [content (fetch-maybe-cached-resource url)]
        (map #(str "http:" %) (map #(get-attr % :href) (html/select content [:div.download_link :a])))))
    (ngo-image-pages pages)))
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Motherless
+;;
+
+(defn motherless-ladyboys-pages []
+  (paginate-2 "http://motherless.com/search/images?term=ladyboy&member=&sort=relevance&range=0&size=3"
+              (paginate-text "NEXT »")))
 
 ;;---------------------------------------
 
 (defresource status
   :available-media-types ["application/json"]
-  :handle-ok (fn [_] (json/generate-string (stats-map @state))))
+  :handle-ok (fn [_] (json/generate-string (ui/stats-map @state))))
 
 (defroutes app
   (ANY "/foo" [] (resource :available-media-types ["text/html"]
@@ -456,15 +412,15 @@
 ;;                   (write-history))))
 
       (init-history)
-      (println "About"(count (:history @state)) "files already downloaded")
+      (println "About" (count (:history @state)) "files already downloaded")
 
       (fs/make-dir *images-dir* *cache-dir*)
 
       ;; UI setup
       (when-not (:list-only opts)
-        (println (stats-headers))
+        (println (ui/stats-headers))
         (.start (Thread. #(while (@state :running)
-                            (print-stats @state)
+                            (ui/print-stats @state)
                             (Thread/sleep 150))
                          "UI Updates")))
 
@@ -477,7 +433,7 @@
             (inc-counter :in-history)))
 
         (= "vrotmne" (:source opts))
-        (doseq [image (lj-images)]
+        (doseq [image (lj-images (lj-pages))]
           (let [title (:title image)
                 src   (:url   image)
                 index (:index image)
@@ -494,6 +450,6 @@
                 ;(System/exit 0)
                 (inc-counter :in-history))))))
 
-      (swap! state assoc :running false)
+;;      (swap! state assoc :running false)
       )))
 
