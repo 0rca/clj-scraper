@@ -1,15 +1,16 @@
 (ns scraper.core
+  (:require [clojure.java.io        :as io]
+            [clojure.string         :as str]
+            [clojure.core.async     :as async :refer [>! >!! <! <!! chan go close! mult tap map< mapcat< go-loop]])
+  (:require [scraper.fs :as fs]
+            [scraper.ui :as ui])
   (:require [net.cgrand.enlive-html :as html])
   (:require [org.httpkit.client     :as http])
-  (:require [clojure.java.io        :as io])
-  (:require [clojure.string         :as str])
   (:require [clj-time.format        :as tf ])
   (:require [digest                 :refer [md5]])
-  (:require [scraper.fs :as fs])
-  (:require [scraper.ui :as ui])
-  (:require [clojure.tools.cli     :refer [cli]])
-  (:import  [java.util.concurrent   Executors])
-  (:import  [org.apache.commons.io  FileUtils])
+  (:require [clojure.tools.cli      :refer [cli]])
+  (:import  [java.util.concurrent   Executors]
+            [org.apache.commons.io  FileUtils])
   (:require [liberator.core :refer [resource defresource]]
             [ring.middleware.params :refer [wrap-params]]
             [ring.adapter.jetty :refer [run-jetty]]
@@ -205,6 +206,8 @@
                  :default "vrotmne"]
                 ["-l" "--list-only" "Save url into list, instead"
                  :default false :flag true]
+                ["-x" "--exit-on-exist" "Exit when file exists"
+                 :default false :flag true]
                 ["-h" "--help" "Print this help" :default false :flag true]
                 ])
 
@@ -264,7 +267,7 @@
    (fn [url]
      (let [content (fetch-resource url)]
        (find-all-by-text content "Link")))
-   (pages)))
+   pages))
 
 (defn lj-images [pages]
   (scrape
@@ -383,7 +386,7 @@
 ;; work around dangerous default behaviour in Clojure
   (alter-var-root #'*read-eval* (constantly false))
 
-  (.start (Thread. #(run-jetty #'handler {:port 3000}) "Jetty"))
+;;  (.start (Thread. #(run-jetty #'handler {:port 3000}) "Jetty"))
 
   (let [[opts args banner] (apply cli args app-specs)]
 
@@ -425,6 +428,33 @@
                          "UI Updates")))
 
       (cond
+        (= "chan" (:source opts))
+        (let [pages-urls-c (async/merge [(async/to-chan (ngo-pages-landscapes))
+                                         (async/to-chan (ngo-pages-nature-and-weather))])
+
+             pages-content-c (async/map< fetch-maybe-cached-resource pages-urls-c)
+
+             image-pages-urls-c (async/mapcat< (fn [content]
+                                                 (let [links   (html/select content [:div#search_results :> :div :> :a])
+                                                       url-fn  (fn [url]
+                                                                 (if (= \/ (first url))
+                                                                   (str "http://photography.nationalgeographic.com" url)
+                                                                   url))]
+                                                   (map url-fn (map #(get-in % [:attrs :href]) links))))
+                                               pages-content-c)
+
+             image-pages-content-c (async/map< fetch-maybe-cached-resource image-pages-urls-c)
+
+             download-urls-c (async/mapcat< (fn [content]
+                                              (map #(str "http:" (get-attr % :href))
+                                                   (html/select content [:div.download_link :a])))
+                                            image-pages-content-c)]
+
+         (while (when-let [url (<!! image-pages-urls-c)]
+                  (println url)
+                  :please-continue)))
+
+
         (= "ngo" (:source opts))
         (doseq [image (ngo-download-links (concat (ngo-pages-landscapes)
                                                   (ngo-pages-nature-and-weather)))]
@@ -433,23 +463,47 @@
             (inc-counter :in-history)))
 
         (= "vrotmne" (:source opts))
-        (doseq [image (lj-images (lj-pages))]
-          (let [title (:title image)
-                src   (:url   image)
-                index (:index image)
-                date  (:date  image)
-                di    (str *images-dir* "/" title)
-                fname (sanitize-path (fs/filename-v3 src title date index *images-dir*))]
+        (let [page-url-c (chan)
+              page-content-c (map< fetch-resource page-url-c)
+              page-content-m (mult page-content-c)
+              pagination-feedback-c (map< (fn [content] (find-by-text content "earlier"))
+                                          (tap page-content-m (chan)))
+              post-url-c (mapcat< (fn [content] (find-all-by-text content "Link"))
+                                  (tap page-content-m (chan)))
+              post-content-c (map< fetch-maybe-cached-resource post-url-c)
+              image-map-c (mapcat< (fn [content]
+                                     (let [jpegs   (find-all-jpeg-links content)
+                                           date    (html/text (second (html/select content [:td.index])))
+                                           title   (html/text (second (html/select content [:td.caption])))]
+                                       (map #(array-map :index %1
+                                                        :date (convert-date date)
+                                                        :title (str/trim title)
+                                                        :url %2)
+                                            (range)
+                                            jpegs)))
+                                   post-content-c)]
+          ;; pagination loop
+          (go-loop [url "http://lj.rossia.org/users/vrotmnen0gi/"]
+                   (>! page-url-c url)
+                   (recur (<! pagination-feedback-c)))
 
-            (if-not (in-history? fname)
-              (if (still-exists? src)
-                (.submit *pool* (partial download-to src fname))
-                (inc-counter :missing))
-              (do
-                ;(swap! state assoc :running false)
-                ;(System/exit 0)
-                (inc-counter :in-history))))))
+          ;; consume images
+          (go-loop [image (<! image-map-c)]
+                   (let [title (:title image)
+                         src   (:url   image)
+                         index (:index image)
+                         date  (:date  image)
+                         di    (str *images-dir* "/" title)
+                         fname (sanitize-path (fs/filename-v3 src title date index *images-dir*))]
 
-;;      (swap! state assoc :running false)
-      )))
+                     (if-not (in-history? fname)
+                       (if (still-exists? src)
+                         (.submit *pool* (partial download-to src fname))
+                         (inc-counter :missing))
+                       (if (:exit-on-exist opts)
+                         (do (swap! state assoc :running false)
+                           (System/exit 0))
+                         (inc-counter :in-history)))
+
+                     (recur (<! image-map-c)))))))))
 
