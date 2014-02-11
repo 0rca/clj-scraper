@@ -4,7 +4,7 @@
             [clojure.core.async     :as async :refer [>! >!! <! <!! chan go close! mult tap map< mapcat< go-loop]])
   (:require [scraper.fs :as fs]
             [scraper.ui :as ui])
-  (:require [me.raynes.fs :refer [exists?]])
+  (:require [me.raynes.fs :as rfs :refer [exists?]])
   (:require [net.cgrand.enlive-html :as html])
   (:require [org.httpkit.client     :as http])
   (:require [clj-time.format        :as tf ])
@@ -146,9 +146,9 @@
   "Download a file from a URI"
   [src fname]
   (try
-    (let [tmpfile (str "tmp/" (fs/filename-from src))]
+    (let [tmpfile (str "tmp/" (rfs/base-name src))]
       (jget src tmpfile)
-      (fs/make-dir (fs/path fname))
+      (rfs/mkdirs (fs/path fname))
       (fs/rename tmpfile fname)
       (inc-counter :completed)
       (add-to-history fname)
@@ -418,7 +418,8 @@
       (init-history)
       (println "About" (count (:history @state)) "files already downloaded")
 
-      (fs/make-dir *images-dir* *cache-dir*)
+      (rfs/mkdirs *images-dir*)
+      (rfs/mkdirs *cache-dir*)
 
       ;; UI setup
       (when-not (:list-only opts)
@@ -460,7 +461,7 @@
         (doseq [image (ngo-download-links (concat (ngo-pages-landscapes)
                                                   (ngo-pages-nature-and-weather)))]
           (if-not (in-history? image)
-            (.submit *pool* (partial download-to image (str *images-dir* "/" (fs/filename-from image))))
+            (.submit *pool* (partial download-to image (str *images-dir* "/" (rfs/base-name image))))
             (inc-counter :in-history)))
 
         (= "vrotmne" (:source opts))

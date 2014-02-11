@@ -1,5 +1,6 @@
 (ns scraper.fs
   (:require [clojure.java.io :as io])
+  (:require [me.raynes.fs :as fs])
   (:require [clojure.string  :as str])
   (:require [digest :refer [md5]]))
 
@@ -14,18 +15,12 @@
   (str/join "/"
             (take-last 3 (str/split fname #"/"))))
 
-(defn make-dir [& dirs]
-  (doseq [v dirs]
-    (let [dir (io/file v)]
-      (when-not (.exists dir)
-        (.mkdirs dir)))))
-
 (defn path [filename]
   (.getParent (io/file filename)))
 
 (defn rename [f1 f2]
-  (make-dir (path f2))
-  (.renameTo (io/file f1) (io/file f2)))
+  (fs/mkdirs (path f2))
+  (fs/rename f1 f2))
 
 (defn filename-from [url]
   (.getName (io/file url)))
