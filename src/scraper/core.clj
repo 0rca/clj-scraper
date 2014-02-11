@@ -4,6 +4,7 @@
             [clojure.core.async     :as async :refer [>! >!! <! <!! chan go close! mult tap map< mapcat< go-loop]])
   (:require [scraper.fs :as fs]
             [scraper.ui :as ui])
+  (:require [me.raynes.fs :refer [exists?]])
   (:require [net.cgrand.enlive-html :as html])
   (:require [org.httpkit.client     :as http])
   (:require [clj-time.format        :as tf ])
@@ -67,7 +68,7 @@
 
 (defn cached? [url]
   (or (contains? (:page-cache @state) url)
-      (fs/exists? (fs/cached-name url *cache-dir*))))
+      (exists? (fs/cached-name url *cache-dir*))))
 
 (defn fetch-resource [url]
   (try
@@ -185,7 +186,7 @@
          (map history-entry (filter #(.isFile %) (file-seq (io/file *images-dir*))))))
 
 (defn init-history []
-  ;; (when (fs/exists? "history.txt.gz")
+  ;; (when (exists? "history.txt.gz")
     ;; (init-history-from-file))
   (init-history-from-filesystem))
 

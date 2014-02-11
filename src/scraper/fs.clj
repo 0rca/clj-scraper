@@ -14,11 +14,6 @@
   (str/join "/"
             (take-last 3 (str/split fname #"/"))))
 
-(defn exists?
-  "detects if a filename exists on local fs"
-  [f]
-  (.exists (io/file f)))
-
 (defn make-dir [& dirs]
   (doseq [v dirs]
     (let [dir (io/file v)]
