@@ -13,12 +13,13 @@
 
 (defn stats-headers []
   (stats-line-string [
-                      "cache"
+                      "pages"
                       "dlque"
                       "dlact"
                       "compl"
                       "error"
                       "miss"
+                      "renamed"
                       "history"
                       "space"
                       "file"]))
@@ -37,15 +38,16 @@
          mi :missing
          h  :in-history
          pool :pool
+         r  :renamed
          f  :last-file} m
          cs (count (:page-cache m))
          s  (.getUsableSpace (io/file "."))
          dlq  (-> pool .getQueue .size)
          dla  (-> pool .getActiveCount)]
-    [cs dlq dla c e mi h (str (gbytes s) "G") (str f " ")]))
+    [cs dlq dla c e mi r h (str (gbytes s) "G") (str f " ")]))
 
 (defn stats-map [m]
-  (zipmap [:cached :download-queued :download-active :completed :errors :missing :history :disk-space :last-file]
+  (zipmap [:cached :download-queued :download-active :completed :errors :missing :renamed :history :disk-space :last-file]
           (stats-array m)))
 
 (defn stats-str [m]
