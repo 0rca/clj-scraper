@@ -1,5 +1,0 @@
-#!/bin/sh
-
-lein uberjar
-sftp -b .deploy.sftp root@146.185.168.229
-echo "DONE"
