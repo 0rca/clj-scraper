@@ -16,3 +16,5 @@ tmp
 history.txt.gz
 ngo-images
 docs
+error.log
+dist
