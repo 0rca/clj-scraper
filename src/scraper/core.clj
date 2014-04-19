@@ -273,11 +273,10 @@
            jpegs   (find-all-jpeg-links content)
            date    (html/text (second (html/select content [:td.index])))
            title   (html/text (second (html/select content [:td.caption])))]
-       (map #(array-map :index %1
+       (map-indexed #(array-map :index %1
                         :date (convert-date date)
                         :title (str/trim title)
                         :url %2)
-            (range)
             jpegs)))
    (lj-posts pages)))
 
