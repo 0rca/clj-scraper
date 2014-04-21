@@ -399,10 +399,10 @@
 
       ;; UI setup
       (when-not (:list-only opts)
-        (println (ui/stats-headers))
+        (ui/print-headers )
         (.start (Thread. #(while (@state :running)
                             (ui/print-stats @state)
-                            (Thread/sleep 150))
+                            (Thread/sleep 500))
                          "UI Updates")))
 
       (condp = (:source opts)
@@ -472,6 +472,7 @@
                                             jpegs)))
                                    post-content-c)
               validated-images-c (chan)
+              download-links-c (chan )
               ]
 
           ;; pagination loop
@@ -492,7 +493,7 @@
                    (recur (<! image-map-c)))
 
 
-          (loop [image (<!! validated-images-c)]
+          (go-loop [image (<! validated-images-c)]
             (let [title (:title image)
                   src   (:url   image)
                   index (:index image)
@@ -509,6 +510,14 @@
                 (when-not (exists? fname)
                   (fs/rename (get-in @state [:history (rfs/base-name fname)]) fname )
                   (inc-counter :renamed))
-                (.submit *pool* (partial download-to src fname))))
+                (>! download-links-c {:src src :filename fname})
+                ))
 
-            (recur (<!! validated-images-c))))))))
+            (recur (<! validated-images-c)))
+
+          (loop [{:keys [src filename]} (<!! download-links-c)]
+            (println src "->" filename)
+            (download-to src filename)
+            ;; (.submit *pool* (partial download-to src filename))
+            (recur (<!! download-links-c)))
+          )))))

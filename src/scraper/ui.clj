@@ -1,6 +1,9 @@
 (ns scraper.ui
   (:require [clojure.java.io :as io]))
 
+(def ui-state (ref {:stats {}
+                    :count 0}))
+
 (defn- tab-format [n pat v]
   (apply format (apply str "\r" (take n (repeat pat))) v))
 
@@ -53,7 +56,19 @@
 (defn stats-str [m]
   (stats-line-numeric (stats-array m)))
 
+(defn print-headers []
+  (println (stats-headers)))
+
 (defn print-stats [m]
-  (do
-    (print (stats-str m))
-    (flush)))
+  (when (not (= m (:stats @ui-state)))
+    (dosync
+      (commute ui-state assoc :stats m)
+      (commute ui-state update-in [:count] inc))))
+
+(add-watch ui-state :key (fn [_ _ _ new-state]
+                           (when (zero? (rem (:count new-state) 20))
+                             (println)
+                             (print-headers))
+                           (println (stats-str (:stats new-state)))
+                           (flush)))
+
