@@ -17,15 +17,15 @@ java -jar target/scraper-0.3.1-standalone.jar
 
 ## Options
 
-    -c, --cache [dir]     cache files directory
-    -o, --output [dir]    downloaded images directory
-    -w, --workers [num]   number of download workers
-    -d, --debug           display debug info
-    -s, --source          website handle to scrape
-    -S, --skip [num]      skip first num posts of LJ
-    -L, --list-only       save image urls, but don't download
-    -x, --exit-on-exist   exit the process if downloaded file exists
-    -h, --help            print this help
+    -c, --cache [dir]           cache files directory
+    -o, --output [dir]          downloaded images directory
+    -w, --workers [num]         number of download workers
+    -d, --debug                 display debug info
+    -s, --source [ngo|vrotmne]  website handle to scrape
+    -S, --skip [num]            skip first num posts of LJ
+    -L, --list-only             save image urls, but don't download
+    -x, --exit-on-exist         exit the process if downloaded file exists
+    -h, --help                  print this help
 
 ## Examples
 
