@@ -21,7 +21,7 @@ java -jar target/scraper-0.3.1-standalone.jar
     -o, --output [dir]          downloaded images directory
     -w, --workers [num]         number of download workers
     -d, --debug                 display debug info
-    -s, --source [ngo|vrotmne]  website handle to scrape
+    -s, --source [ngo|vrotmne]  handle of website to scrape
     -S, --skip [num]            skip first num posts of LJ
     -L, --list-only             save image urls, but don't download
     -x, --exit-on-exist         exit the process if downloaded file exists
