@@ -11,19 +11,27 @@ $ lein uberjar
 
 ## Usage
 
+```sh
 java -jar target/scraper-0.3.1-standalone.jar
+```
 
 ## Options
 
-FIXME: listing of options this app accepts.
+    -c, --cache [dir] - cache files directory
+    -o, --output [dir] - downloaded images directory
+    -w, --workers [num] - number of download workers
+    -d, --debug - display debug info
+    -s, --source - website handle to scrape
+    -S, --skip [num] - skip first num posts of LJ
+    -L, --list-only - save image urls, but don't download
+    -x, --exit-on-exist - exit the process if downloaded file exists
+    -h, --help - print this help
 
 ## Examples
 
-...
-
-### Bugs
-
-...
+```sh
+$ java jar target/scraper-0.3.1-standalone.jar -w 20 -s ngo
+```
 
 ## License
 

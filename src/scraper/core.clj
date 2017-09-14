@@ -200,7 +200,7 @@
                  :default false]
                 ["-s" "--source" "Website to download from"
                  :default "ngo"]
-                ["-S" "--skip" "Skip first n posts of js"]
+                ["-S" "--skip" "Skip first n posts of LJ"]
                 ["-l" "--list-only" "Save url into list, instead"
                  :default false :flag true]
                 ["-x" "--exit-on-exist" "Exit when file exists"
