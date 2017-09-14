@@ -3,6 +3,11 @@
 A web-scraper for personal enjoyment and experiments with core/async.
 Supports two websites for your scraping pleasure.
 
+## Requirements
+
+1 [Leiningen](https://leiningen.org)
+2 JDK >= 1.6
+
 ## Installation
 
 ```sh
