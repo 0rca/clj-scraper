@@ -5,8 +5,8 @@ Supports two websites for your scraping pleasure.
 
 ## Requirements
 
-1 [Leiningen](https://leiningen.org)
-2 JDK >= 1.6
+1. [Leiningen](https://leiningen.org)
+2. JDK >= 1.6
 
 ## Installation
 
