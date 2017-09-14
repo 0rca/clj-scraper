@@ -8,7 +8,7 @@ Supports two websites for your scraping pleasure.
 1. [Leiningen](https://leiningen.org)
 2. JDK >= 1.6
 
-## Installation
+## Building
 
 ```sh
 $ lein uberjar
