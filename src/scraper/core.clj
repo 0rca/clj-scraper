@@ -199,7 +199,7 @@
                 ["-d" "--debug" "Display debug information"
                  :default false]
                 ["-s" "--source" "Website to download from"
-                 :default "vrotmne"]
+                 :default "ngo"]
                 ["-S" "--skip" "Skip first n posts of js"]
                 ["-l" "--list-only" "Save url into list, instead"
                  :default false :flag true]

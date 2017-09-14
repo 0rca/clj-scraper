@@ -1,16 +1,17 @@
-# scraper
+# clj-scraper
 
-FIXME: description
+A web-scraper for personal enjoyment and experiments with core/async.
+Supports two websites for your scraping pleasure.
 
 ## Installation
 
-Download from http://example.com/FIXME.
+```sh
+$ lein uberjar
+```
 
 ## Usage
 
-FIXME: explanation
-
-    $ java -jar scraper-0.1.0-standalone.jar [args]
+java -jar target/scraper-0.3.1-standalone.jar
 
 ## Options
 
@@ -23,10 +24,6 @@ FIXME: listing of options this app accepts.
 ### Bugs
 
 ...
-
-### Any Other Sections
-### That You Think
-### Might be Useful
 
 ## License
 
